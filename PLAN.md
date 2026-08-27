@@ -66,14 +66,15 @@ Given a song title + artist, produce plain-text lyrics (one line per verse/choru
 
 #### 1b. Niche Community Sites
 - **utaten.com** — Vocaloid lyrics (Japanese + romaji). Scraping needed.
-- **silentblue.remywiki.com** — maimai game songs. Wiki-style, structured data.
+- **silentblue.remywiki.com** — maimai/chunithm/ongeki game songs. **WORKING via index.php?search=<title>** (see `poc/02c_silentblue.py`). Covers instrumentals (returns "None."). JP songs may be stored under English page titles (Fake Face Failsafe) — need candidate fallback.
 - **maimai-info / other rhythm game wikis** — for game-specific songs.
 
 #### 1c. OCR from Physical Booklets
 - User provides photos/scans of album lyric booklets.
-- Pipeline: image → OCR (Tesseract or similar) → LLM cleanup → cleaned text.
-- May need language-specific models (Japanese, Chinese characters).
-- Post-processing: remove page numbers, headers, formatting artifacts.
+- Pipeline: image → OCR → cleaned text.
+- **TESTED (see `poc/ocr.py`):** Vision LLM (Qwen3.8-27B via llama-server on RX 9060 XT) is **far superior** to Tesseract for real phone photos (uneven lighting, no scanner). VLM transcribed ASTEROID アンデッド with accurate kanji + line breaks (~2 minor errors); Tesseract lost most lines and garbled kanji. VLM also handles maimai prism layouts and manosaba artificial-language lyrics.
+- **Decision:** Vision LLM = primary OCR; Tesseract (jpn+eng) = CPU fallback for well-lit flat pages.
+- Post-processing: LLM cleanup to fix minor errors, remove page numbers.
 
 #### 1d. AI Lyrics Recognition from Audio
 - Use a speech-to-text model fine-tuned for singing (e.g., Whisper with singing mode).
