@@ -237,58 +237,54 @@ class Orchestrator:
 lyrics-fetcher/
 ├── lyrics_fetcher/
 │   ├── __init__.py
-│   ├── cli.py              # Main CLI entry point
-│   ├── cache/              # SQLite caching layer
-│   │   ├── db.py           # Database connection & queries
-│   │   └── models.py       # Cache table schemas
-│   ├── fetcher/            # Part 1: Lyrics fetching
+│   ├── cli.py              # CLI entry point (fetch/ocr/compile/full/album)
+│   ├── pipeline.py         # End-to-end orchestrator (fetch/OCR -> align -> write)
+│   ├── batch.py            # Album batch + booklet->track mapper
+│   ├── cache.py            # SQLite lyrics + OCR cache
+│   ├── models.py           # SongMeta, LyricLine, Lyrics
+│   ├── utils.py            # HTTP session, title/artist match, paths
+│   ├── fetcher/            # Each source = own class
 │   │   ├── base.py         # Abstract provider interface
+│   │   ├── utaten.py       # vocaloid + furigana
 │   │   ├── genius.py       # Genius API/scrape
-│   │   ├── musixmatch.py   # Musixmatch
-│   │   ├── azlyrics.py     # AZLyrics scraper
-│   │   ├── utaten.py       # Vocaloid lyrics site
-│   │   ├── silentblue.py   # maimai wiki
-│   │   ├── utamap.py       # UTA-10 / other databases
-│   │   └── orchestrator.py # Tries sources, presents choices
-│   ├── ocr/                # Part 1b: OCR from booklets
-│   │   ├── preprocess.py   # Image preprocessing
-│   │   ├── recognize.py    # OCR engine (Tesseract wrapper)
-│   │   └── clean.py        # Post-processing cleaned text
-│   ├── aligner/            # Part 2: Timestamp alignment
-│   │   ├── base.py         # Abstract aligner interface
-│   │   ├── whisper_align.py# Whisper-based alignment (faster-whisper)
-│   │   ├── whisper_cpp.py  # whisper.cpp with ROCm/Vulkan
-│   │   ├── mfa_align.py    # Montreal Forced Aligner (CPU)
-│   │   └── manual.py       # Semi-automatic editing
-│   ├── output/             # LRC + HTML file generation
-│   │   ├── lrc_writer.py   # Write .lrc with metadata
-│   │   ├── html_writer.py  # Write companion HTML with furigana
-│   │   └── furigana.py     # Kanji → hiragana converter
-│   └── utils/              # Helpers
-│       ├── audio.py        # Audio loading (pydub / librosa)
-│       └── text.py         # Text normalization, fuzzy matching
+│   │   ├── silentblue.py   # maimai/rhythm-game wiki
+│   │   ├── whisper.py      # AI-recognition fallback (transcribe audio)
+│   │   └── orchestrator.py # Tries sources + cache, returns best/all
+│   ├── ocr/                # Booklet OCR (as a lyrics source)
+│   │   ├── base.py         # Abstract OCR
+│   │   ├── vision.py       # Qwen3.5-9B via llama-server (primary)
+│   │   └── tesseract.py    # CPU fallback
+│   ├── aligner/
+│   │   ├── base.py         # BaseAligner + TimedLine
+│   │   ├── whisper_cpp.py  # whisper.cpp Vulkan + monotonic DP
+│   │   └── faster_whisper_aligner.py
+│   └── output/
+│       └── writers.py      # LRC + HTML(furigana) writers
 ├── tests/
-├── setup.py / pyproject.toml
-├── requirements.txt
+├── pyproject.toml
 └── README.md
 ```
 
 ### CLI Design
 ```bash
-# Fetch lyrics for a song (tries all sources, shows choices if ambiguous)
+# Fetch lyrics for a song (tries all sources, shows which found lyrics)
 lyrics-fetcher fetch "Song Title" --artist "Artist Name"
 
 # Fetch with specific source
 lyrics-fetcher fetch "Song Title" --artist "Artist Name" --source utaten
 
-# OCR from images
-lyrics-fetcher ocr path/to/booklet.jpg --language ja
+# OCR from images (vlm = Qwen on port 8081, or tesseract)
+lyrics-fetcher ocr path/to/booklet.jpg --engine vlm
 
-# Compile: align lyrics with audio → LRC + HTML files
+# Compile: align lyrics text against an audio file -> .lrc
 lyrics-fetcher compile song.mp3 lyrics.txt --output song.lrc
 
-# Full pipeline: fetch + compile (generates .lrc + .html)
-lyrics-fetcher full "Song Title" --artist "Artist" --audio song.mp3 --output song.lrc
+# Full pipeline for one song (fetch/OCR -> align -> .lrc + .html)
+lyrics-fetcher full song.flac --image booklet.jpg --jellyfin
+
+# Batch an entire album: auto-map booklet pages -> tracks, align all
+# --jellyfin writes each .lrc next to its audio (Jellyfin layout)
+lyrics-fetcher album "/music/Album Name" --jellyfin
 ```
 
 ### Output Files
