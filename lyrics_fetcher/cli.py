@@ -24,12 +24,17 @@ from .aligner.whisper_cpp import DEFAULT_BIN as DEFAULT_WHISPER_BIN
 from .aligner.whisper_cpp import DEFAULT_MODEL as DEFAULT_WHISPER_MODEL
 from .aligner.whisper_cpp import WhisperCppAligner
 from .output.writers import LrcWriter
+from .cache import LyricsCache
 
 SOURCE_FACTORY = {
     "utaten": UtatenFetcher,
     "genius": GeniusFetcher,
     "silentblue": SilentBlueFetcher,
 }
+
+
+def _make_cache(use_cache: bool) -> LyricsCache | None:
+    return LyricsCache() if use_cache else None
 
 
 def _cmd_fetch(args: argparse.Namespace) -> int:
@@ -97,14 +102,16 @@ def _cmd_compile(args: argparse.Namespace) -> int:
 def _cmd_full(args: argparse.Namespace) -> int:
     audio = Path(args.audio)
     image = Path(args.image) if args.image else None
+    cache = _make_cache(not args.no_cache)
     # OCR available only if --image given (vision server must be reachable)
-    ocr_engine = VLMOcr(api=args.api, model=args.model) if image else None
+    ocr_engine = VLMOcr(api=args.api, model=args.model, cache=cache) if image else None
     pipe = Pipeline(
         aligner=WhisperCppAligner(
             binary=Path(args.binary) if args.binary else DEFAULT_WHISPER_BIN,
             model=Path(args.model_whisper) if args.model_whisper else DEFAULT_WHISPER_MODEL,
         ),
         ocr=ocr_engine,
+        fetcher=FetchOrchestrator(cache=cache),
     )
     result = pipe.run(audio=audio, out_dir=Path(args.out_dir), image=image,
                       write_html=not args.no_html,
@@ -128,14 +135,17 @@ def _cmd_album(args: argparse.Namespace) -> int:
         return 2
     booklet_dir = Path(args.booklet) if args.booklet else None
 
+    cache = _make_cache(not args.no_cache)
     # OCR engine always available for batch (matching needs to read page headers)
-    ocr_engine = VLMOcr(api=args.api, model=args.model)
+    ocr_engine = VLMOcr(api=args.api, model=args.model, cache=cache)
     pipe = Pipeline(
         aligner=WhisperCppAligner(
             binary=Path(args.binary) if args.binary else DEFAULT_WHISPER_BIN,
             model=Path(args.model_whisper) if args.model_whisper else DEFAULT_WHISPER_MODEL,
         ),
         ocr=ocr_engine,
+        fetcher=FetchOrchestrator(cache=cache),
+        use_whisper_fallback=not args.no_whisper_fallback,
     )
 
     processed, unmatched = batch_album(
@@ -203,6 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("--no-html", action="store_true", help="skip HTML companion")
     pfull.add_argument("--jellyfin", action="store_true",
                        help="write .lrc next to the audio file (Jellyfin layout)")
+    pfull.add_argument("--no-cache", action="store_true", help="disable SQLite cache")
     pfull.add_argument("--web-first", action="store_true",
                        help="when --image given, try web fetchers before OCR "
                             "(default: OCR first, it's authoritative for the album)")
@@ -220,6 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
     pal.add_argument("--no-html", action="store_true")
     pal.add_argument("--jellyfin", action="store_true",
                      help="write .lrc next to each audio file (Jellyfin layout)")
+    pal.add_argument("--no-cache", action="store_true", help="disable SQLite cache")
+    pal.add_argument("--no-whisper-fallback", action="store_true",
+                     help="don't transcribe audio via whisper when no lyrics found")
     pal.add_argument("--web-first", action="store_true",
                      help="try web fetchers before OCR for each track")
     pal.add_argument("-q", "--quiet", action="store_true")

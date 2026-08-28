@@ -35,10 +35,12 @@ MAX_SIDE = 1568
 class VLMOcr(BaseOCR):
     name = "ocr-vlm"
 
-    def __init__(self, api: str = DEFAULT_API, model: str = DEFAULT_MODEL, timeout: int = 600):
+    def __init__(self, api: str = DEFAULT_API, model: str = DEFAULT_MODEL,
+                 timeout: int = 600, cache=None):
         self.api = api
         self.model = model
         self.timeout = timeout
+        self.cache = cache
 
     @staticmethod
     def _encode(image: Path) -> str:
@@ -53,6 +55,11 @@ class VLMOcr(BaseOCR):
         return f"data:image/jpeg;base64,{b64}"
 
     def ocr(self, image: Path) -> str:
+        # cache hit by absolute image path
+        if self.cache:
+            hit = self.cache.get_ocr(image)
+            if hit is not None:
+                return hit
         payload = {
             "model": self.model,
             "messages": [{
@@ -67,7 +74,10 @@ class VLMOcr(BaseOCR):
         }
         r = requests.post(self.api, json=payload, timeout=self.timeout)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        text = r.json()["choices"][0]["message"]["content"]
+        if self.cache:
+            self.cache.put_ocr(image, text)
+        return text
 
     def fetch(self, image: Path, title: str = "", artist: str = "") -> Lyrics:
         return super().fetch(image, title, artist)

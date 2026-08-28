@@ -39,11 +39,14 @@ class Pipeline:
         fetcher: BaseFetcher | FetchOrchestrator | None = None,
         ocr: BaseOCR | None = None,
         aligner: BaseAligner | None = None,
+        use_whisper_fallback: bool = True,
     ):
         # default: web fetcher orchestrator + whisper aligner; OCR optional
         self.fetcher = fetcher if fetcher is not None else FetchOrchestrator()
         self.ocr = ocr
         self.aligner = aligner if aligner is not None else WhisperCppAligner()
+        self.use_whisper_fallback = use_whisper_fallback
+        self._current_audio: Path | None = None
 
     # ---- lyrics acquisition (web or OCR) ----
     def _fetch_lyrics(self, meta: SongMeta, image: Path | None = None,
@@ -75,7 +78,19 @@ class Pipeline:
 
         # web-first fallback: OCR if no web match
         if self.ocr and image and image.exists():
-            return self.ocr.fetch(image, meta.title, meta.artist)
+            l = self.ocr.fetch(image, meta.title, meta.artist)
+            if l:
+                return l
+
+        # last resort: transcribe the audio with whisper as the lyrics
+        if self.use_whisper_fallback:
+            audio = self._current_audio
+            if audio:
+                from .fetcher.whisper import WhisperFetcher
+                wl = WhisperFetcher(self.aligner).fetch(str(audio), meta.artist)
+                if wl:
+                    return wl
+
         return Lyrics(source="none", title=meta.title, artist=meta.artist)
 
     # ---- main entry ----
@@ -102,6 +117,7 @@ class Pipeline:
             lyrics: pre-acquired lyrics (avoids re-OCR in batch).
         """
         meta = SongMeta.from_path(audio)
+        self._current_audio = audio
         lyrics = self._fetch_lyrics(meta, image, prefer_ocr=prefer_ocr, lyrics=lyrics)
         if not lyrics:
             raise RuntimeError(
