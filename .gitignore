@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+uv.lock
+
+# test artifacts
+poc/audio/
+poc/out/
+out/
+vendor/
+*.wav
+*.srt
