@@ -20,27 +20,32 @@ from .base import BaseAligner, TimedLine
 
 DEFAULT_BIN = Path.home() / "whisper.cpp" / "build" / "bin" / "whisper-cli"
 DEFAULT_MODEL = Path.home() / "whisper.cpp" / "models" / "ggml-medium.bin"
+MODEL_TURBO = Path.home() / "whisper.cpp" / "models" / "ggml-large-v3-turbo.bin"
 
 
 class WhisperCppAligner(BaseAligner):
     name = "whisper-cpp"
 
     def __init__(self, binary: Path = DEFAULT_BIN, model: Path = DEFAULT_MODEL,
-                 lang: str = "ja", max_len: int = 40, device: int = 0):
+                 lang: str = "ja", max_len: int = 40, device: int = 0,
+                 extra_models: tuple[Path, ...] = ()):
         self.binary = binary
         self.model = model
         self.lang = lang
         self.max_len = max_len
         self.device = device
+        # additional whisper models to ALSO transcribe with, useful when the
+        # primary model hallucinates on a hard song (e.g. 告げよ). Their segments
+        # join the same anchor pool so the best match per line wins.
+        self.extra_models = list(extra_models)
 
     # ---- transcription ----
-    def _segments(self, audio: Path) -> list[dict]:
-        """Run whisper-cli, return segments: [{from_ms, to_ms, text}]."""
-        out = Path(
-            "/tmp"  # whisper writes <out>.json; use a unique temp prefix
-        ) / f"_lf_whisper_{self.model.stem}"
+    def _segments(self, audio: Path, model: Path | None = None) -> list[dict]:
+        """Run whisper-cli with a model, return segments [{from_ms,to_ms,text}]."""
+        model = model or self.model
+        out = Path("/tmp") / f"_lf_whisper_{model.stem}"
         cmd = [
-            str(self.binary), "-m", str(self.model), "-l", self.lang,
+            str(self.binary), "-m", str(model), "-l", self.lang,
             "-f", str(audio), "-ml", str(self.max_len),
             "-oj", "-of", str(out), "--no-prints",
             "-dev", str(self.device),
@@ -56,6 +61,16 @@ class WhisperCppAligner(BaseAligner):
                 "text": s["text"].strip(),
             })
         return segs
+
+    def _all_segments(self, audio: Path) -> list[dict]:
+        """Transcribe with the primary + any extra models, return merged segments."""
+        all_segs = self._segments(audio, self.model)
+        for m in self.extra_models:
+            try:
+                all_segs += self._segments(audio, m)
+            except Exception:
+                pass  # a failing extra model shouldn't abort alignment
+        return all_segs
 
     # ---- normalization ----
     @staticmethod
@@ -132,7 +147,10 @@ class WhisperCppAligner(BaseAligner):
 
     # ---- public API ----
     def align(self, audio: Path, lyrics: Lyrics) -> list[TimedLine]:
-        segs = self._segments(audio)
+        segs = self._all_segments(audio)
+        # merged segments from multiple models aren't time-sorted; sort so the
+        # DP's monotonic constraint is meaningful (segments in chronological order)
+        segs.sort(key=lambda s: s["from"])
         known = [l.text for l in lyrics.lines]
         if not known or not segs:
             return [TimedLine(text=l.text, start=0.0) for l in lyrics.lines]

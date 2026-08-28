@@ -22,6 +22,7 @@ from .ocr.vision import VLMOcr
 from .ocr.tesseract import TesseractOcr
 from .aligner.whisper_cpp import DEFAULT_BIN as DEFAULT_WHISPER_BIN
 from .aligner.whisper_cpp import DEFAULT_MODEL as DEFAULT_WHISPER_MODEL
+from .aligner.whisper_cpp import MODEL_TURBO
 from .aligner.whisper_cpp import WhisperCppAligner
 from .output.writers import LrcWriter
 from .cache import LyricsCache
@@ -105,10 +106,12 @@ def _cmd_full(args: argparse.Namespace) -> int:
     cache = _make_cache(not args.no_cache)
     # OCR available only if --image given (vision server must be reachable)
     ocr_engine = VLMOcr(api=args.api, model=args.model, cache=cache) if image else None
+    extra = tuple(Path(x) for x in args.extra_model) if args.extra_model else ()
     pipe = Pipeline(
         aligner=WhisperCppAligner(
             binary=Path(args.binary) if args.binary else DEFAULT_WHISPER_BIN,
             model=Path(args.model_whisper) if args.model_whisper else DEFAULT_WHISPER_MODEL,
+            extra_models=extra,
         ),
         ocr=ocr_engine,
         fetcher=FetchOrchestrator(cache=cache),
@@ -138,10 +141,14 @@ def _cmd_album(args: argparse.Namespace) -> int:
     cache = _make_cache(not args.no_cache)
     # OCR engine always available for batch (matching needs to read page headers)
     ocr_engine = VLMOcr(api=args.api, model=args.model, cache=cache)
+    # extra whisper model(s): default to large-v3-turbo so hallucinating songs
+    # (告げよ) get a second transcription whose anchors join the pool
+    extra = tuple(Path(x) for x in (args.extra_model or [str(MODEL_TURBO)]))
     pipe = Pipeline(
         aligner=WhisperCppAligner(
             binary=Path(args.binary) if args.binary else DEFAULT_WHISPER_BIN,
             model=Path(args.model_whisper) if args.model_whisper else DEFAULT_WHISPER_MODEL,
+            extra_models=extra,
         ),
         ocr=ocr_engine,
         fetcher=FetchOrchestrator(cache=cache),
@@ -210,6 +217,9 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("--model", default="qwen3.5-9b")
     pfull.add_argument("--binary", default=None)
     pfull.add_argument("--model-whisper", default=None)
+    pfull.add_argument("--extra-model", action="append", default=None,
+                       help="extra whisper model(s) to transcribe with for anchor "
+                            "merging; repeatable. Helps hallucinating songs.")
     pfull.add_argument("--no-html", action="store_true", help="skip HTML companion")
     pfull.add_argument("--jellyfin", action="store_true",
                        help="write .lrc next to the audio file (Jellyfin layout)")
@@ -228,6 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
     pal.add_argument("--model", default="qwen3.5-9b")
     pal.add_argument("--binary", default=None)
     pal.add_argument("--model-whisper", default=None)
+    pal.add_argument("--extra-model", action="append", default=None,
+                     help="extra whisper model(s); default large-v3-turbo")
     pal.add_argument("--no-html", action="store_true")
     pal.add_argument("--jellyfin", action="store_true",
                      help="write .lrc next to each audio file (Jellyfin layout)")

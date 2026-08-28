@@ -19,9 +19,22 @@ class BaseOCR(ABC):
         """Return the raw transcribed lyrics text from one booklet image."""
 
     def fetch(self, image: Path, title: str = "", artist: str = "") -> Lyrics:
-        """OCR an image and wrap it as Lyrics."""
+        """OCR an image and wrap it as Lyrics.
+
+        A leading bracketed title header (e.g. ``[命を振り回せ]``) printed on
+        the page is treated as a header, not a lyric line, and dropped.
+        """
         text = self.ocr(image).strip()
         lines = [l for l in (x.strip() for x in text.splitlines()) if l]
+        # drop a leading header line like [命を振り回せ] or a bare 4-6 char title
+        if len(lines) > 1:
+            first = lines[0]
+            if first.startswith("[") and first.endswith("]"):
+                lines = lines[1:]
+            elif len(first) <= 8 and " " not in first and not any(
+                c in first for c in "、。！？"  # not a full sentence
+            ):
+                lines = lines[1:]
         return Lyrics(
             source=self.name,
             title=title,
