@@ -5,6 +5,7 @@ Subcommands:
   ocr     — OCR a booklet image (vlm / tesseract) to stdout
   compile — align known lyrics against an audio file -> .lrc (+ .html)
   full    — end-to-end: metadata + fetch/OCR + align + write (recommended)
+  cross-check — compare whisper vs Qwen3 timings; flag drifted lines
 """
 from __future__ import annotations
 
@@ -182,6 +183,45 @@ def _cmd_album(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_crosscheck(args: argparse.Namespace) -> int:
+    """Run both aligners on a song and report lines where timings diverge."""
+    from .aligner.whisper_cpp import WhisperCppAligner
+    from .aligner.qwen3_forced_aligner import Qwen3ForcedAligner
+    from .crosscheck import run_cross_check, format_report
+    from .models import LyricLine
+
+    audio = Path(args.audio)
+    if args.lyrics_file and Path(args.lyrics_file).exists():
+        lyrics_text = Path(args.lyrics_file).read_text(encoding="utf-8")
+    elif args.lyrics_file:
+        lyrics_text = args.lyrics_file
+    else:
+        print("cross-check needs a lyrics_file path or inline text", file=sys.stderr)
+        return 2
+
+    lyric_lines = [l for l in (x.strip() for x in lyrics_text.splitlines()) if l]
+    if not lyric_lines:
+        print("no lyric lines to compare", file=sys.stderr)
+        return 2
+    lyrics = Lyrics(source="text", title=args.title or audio.stem, artist=args.artist or "")
+    lyrics.lines = [LyricLine(t) for t in lyric_lines]
+
+    binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
+    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
+    qm = Path(args.qwen3_model) if getattr(args, "qwen3_model", None) else None
+    # whisper runs as a SEPARATE subprocess (frees its GPU memory on exit) so it
+    # must run BEFORE qwen3 loads (in-process, needs its own VRAM) to keep both
+    # from being resident on the 16GB card at once.
+    engines = [
+        ("whisper", WhisperCppAligner(binary=binary, model=model, extra_models=())),
+        ("qwen3", Qwen3ForcedAligner(model_dir=qm)),
+    ]
+    report = run_cross_check(engines, audio, lyrics, tolerance=args.tolerance)
+    print(format_report(report, verbose=args.verbose))
+    # non-zero exit when anything needs attention so scripts can react
+    return 1 if (report.drifted or report.missing) else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="lyrics-fetcher",
                                 description="Fetch and align lyrics for music files.")
@@ -220,6 +260,23 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
     pc.add_argument("--config", default=None, help="path to a config TOML file")
     pc.set_defaults(func=_cmd_compile)
+
+    px = sub.add_parser("cross-check",
+                        help="Compare whisper vs Qwen3 timings; flag drifted lines")
+    px.add_argument("audio")
+    px.add_argument("lyrics_file", nargs="?", default=None,
+                    help="path to a lyrics .txt/.lrc, or literal text")
+    px.add_argument("--tolerance", type=float, default=2.5,
+                    help="|seconds| above which two timings count as drifted (default 2.5)")
+    px.add_argument("--title", default="")
+    px.add_argument("--artist", default="")
+    px.add_argument("--binary", default=None, help="path to whisper-cli")
+    px.add_argument("--model-whisper", default=None, help="path to ggml model")
+    px.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
+    px.add_argument("-v", "--verbose", action="store_true",
+                    help="show every line (default: drifted/missing lines only)")
+    px.add_argument("--config", default=None, help="path to a config TOML file")
+    px.set_defaults(func=_cmd_crosscheck)
 
     pfull = sub.add_parser("full", help="End-to-end: metadata+fetch/OCR+align+write")
     pfull.add_argument("audio")
