@@ -5,15 +5,22 @@ description = "Fetch, align, and write lyrics files for music."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "accelerate>=1.12",
     "beautifulsoup4>=4.15.0",
     "faster-whisper>=1.2.1",
+    "librosa>=1.0.0",
     "mutagen>=1.48.1",
+    "nagisa>=0.3.0",
     "numpy>=2.5.2",
     "pillow>=12.3.0",
     "pytesseract>=0.3.13",
     "requests>=2.34.2",
+    "safetensors>=0.8.0",
     "soundfile>=0.14.0",
     "thefuzz>=0.22.1",
+    "torch==2.11.0+rocm7.2",
+    "torchaudio==2.11.0+rocm7.2",
+    "transformers==4.57.6",
 ]
 
 [project.scripts]
@@ -22,6 +29,12 @@ lyrics-fetcher = "lyrics_fetcher.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/rocm7.2"
+
+[tool.uv.sources]
+transformers = { git = "https://github.com/huggingface/transformers.git" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["lyrics_fetcher"]
