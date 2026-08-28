@@ -39,12 +39,14 @@ class Pipeline:
         fetcher: BaseFetcher | FetchOrchestrator | None = None,
         ocr: BaseOCR | None = None,
         aligner: BaseAligner | None = None,
-        use_whisper_fallback: bool = True,
+        use_whisper_fallback: bool = False,
     ):
         # default: web fetcher orchestrator + whisper aligner; OCR optional
         self.fetcher = fetcher if fetcher is not None else FetchOrchestrator()
         self.ocr = ocr
         self.aligner = aligner if aligner is not None else WhisperCppAligner()
+        # Default OFF: whisper is poor at Japanese singing, so tracks with no
+        # lyrics are skipped (no .lrc) unless the user opts into best-effort.
         self.use_whisper_fallback = use_whisper_fallback
         self._current_audio: Path | None = None
 

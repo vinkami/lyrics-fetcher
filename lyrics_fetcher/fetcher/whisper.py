@@ -10,11 +10,26 @@ their own timestamps, so this fetcher returns lyric lines together with timing.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ..models import LyricLine, Lyrics
 from ..utils import get_session
 from .base import BaseFetcher
+
+# Music-note tokens whisper emits when it hears music but no vocals (e.g. an
+# instrumental with no singing): "♪~", "♪ ♫", "♪♪", etc. These are NOT lyrics —
+# writing them produces a useless .lrc full of "♪~". We drop them so best-effort
+# transcription only keeps genuine speech/singing (e.g. spoken-word samples like
+# ATLAS RUSH's "Deliver the file").
+_MUSIC_NOTE_RE = re.compile(r"[\u2669\u266a\u266b\u266c\u266d♫♪]")
+_HAVE_TEXT_RE = re.compile(r"[a-zA-Z0-9\u3040-\u30ff\u3400-\u9fff]")
+
+
+def _is_lyric_line(text: str) -> bool:
+    """True if a transcribed segment is really lyrics/speech (not music notes)."""
+    stripped = _MUSIC_NOTE_RE.sub("", text)
+    return bool(_HAVE_TEXT_RE.search(stripped))
 
 
 class WhisperFetcher(BaseFetcher):
@@ -39,7 +54,15 @@ class WhisperFetcher(BaseFetcher):
         if not audio.exists():
             return Lyrics(source=self.name, title=title, artist=artist)
         segs = self.aligner._segments(audio)
-        lines = [LyricLine(text=s["text"], start=s["from"] / 1000.0) for s in segs]
+        # drop music-note-/empty-only segments (instrumental with no vocals);
+        # if nothing real remains the fetch returns empty Lyrics so the pipeline
+        # treats the track as "no lyrics" and skips it.
+        lines = [
+            LyricLine(text=s["text"], start=s["from"] / 1000.0)
+            for s in segs if _is_lyric_line(s["text"])
+        ]
+        if not lines:
+            return Lyrics(source=self.name, title=str(audio.stem), artist=artist)
         return Lyrics(source=self.name, title=str(audio.stem), artist=artist, lines=lines)
 
     @staticmethod
