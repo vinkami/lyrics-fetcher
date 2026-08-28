@@ -88,26 +88,66 @@ def clean(s: str) -> str:
     return re.sub(r"[\s「」『』（）()〈〉【】、。,.!！?？\-]", "", s)
 
 
-def align_lines(known: list[str], segs: list[dict]) -> list[tuple[float, str]]:
-    """Assign whisper segment start times to known lyric lines via fuzzy match."""
-    try:
-        from thefuzz import fuzz
-    except ImportError:
-        fuzz = None
-    if fuzz is None:
-        total = segs[-1]["to"] / 1000 if segs else 0
-        n = len(known)
-        return [(i * total / max(n, 1), l) for i, l in enumerate(known)]
-    times = {}
-    for ki, line in enumerate(known):
+def align_lines(known: list[str], segs: list[dict], min_score: float = 0.0) -> list[tuple[float, str]]:
+    """Monotonic forced alignment (DTW-style).
+
+    Maps each known lyric line to a whisper segment such that the line indices
+    are NON-DECREASING (line n cannot map to an earlier segment than line n-1).
+    Maximizes total fuzzy-match similarity via dynamic programming with
+    backtracking. This fixes the repeated-chorus collision the greedy best-match
+    version had: identical chorus lines are now kept in correct temporal order.
+
+    Returns list of (start_seconds, line_text) in original line order.
+    """
+    from thefuzz import fuzz
+
+    n_lines = len(known)
+    n_segs = len(segs)
+    if n_lines == 0 or n_segs == 0:
+        return [(0.0, l) for l in known]
+
+    # similarity[i][j] = match quality of known line i against segment j
+    sim = [[0.0] * n_segs for _ in range(n_lines)]
+    for i, line in enumerate(known):
         cl = clean(line)
-        best, best_score = None, 0
-        for si, seg in enumerate(segs):
-            score = fuzz.ratio(cl, clean(seg["text"]))
-            if score > best_score:
-                best, best_score = si, score
-        times[ki] = segs[best]["from"] / 1000 if best is not None else 0
-    return [(times[ki], l) for ki, l in enumerate(known)]
+        for j, seg in enumerate(segs):
+            sim[i][j] = fuzz.ratio(cl, clean(seg["text"]))
+
+    # DP: dp[i][j] = best total score for first (i+1) lines, line i->seg j.
+    # Monotonic constraint: line i-1 maps to seg k with k <= j (non-decreasing).
+    # Transition: dp[i][j] = sim[i][j] + max_{k<=j} dp[i-1][k]. We track the argmax
+    # of the prefix as `running` to make each row O(n_segs).
+    NEG = float("-inf")
+    dp = [[NEG] * n_segs for _ in range(n_lines)]
+    back = [[-1] * n_segs for _ in range(n_lines)]  # seg index line i-1 used
+
+    for j in range(n_segs):
+        dp[0][j] = sim[0][j]
+    for i in range(1, n_lines):
+        running = NEG
+        argk = None
+        for j in range(n_segs):
+            if dp[i-1][j] > running:  # prefix max of previous row up to j
+                running = dp[i-1][j]
+                argk = j
+            if argk is not None:
+                dp[i][j] = running + sim[i][j]
+                back[i][j] = argk
+
+    # backtrack: find best end
+    best_j = max(range(n_segs), key=lambda j: dp[n_lines-1][j])
+    assign = [0] * n_lines
+    j = best_j
+    for i in range(n_lines - 1, 0, -1):
+        assign[i] = j
+        j = back[i][j]
+    assign[0] = j
+
+    timed = []
+    for i, line in enumerate(known):
+        seg = segs[assign[i]]
+        timed.append((seg["from"] / 1000.0, line))
+    return timed
 
 
 def write_lrc(path: Path, title, artist, album, timed):
