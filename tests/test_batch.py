@@ -104,3 +104,52 @@ def test_discover_audio_and_booklet(tmp_path):
     pages = mapper.discover_booklet()
     assert {p.name for p in audio} == {"01 a.flac", "02 b.mp3"}
     assert {p.name for p in pages} == {"p1.jpg", "p2.png"}
+
+
+# ---- title-only block rejection (index/title pages aren't lyrics) ----
+def test_title_only_block_rejected_and_reported(tmp_path):
+    # page = index page listing song titles with no lyrics (all 1-line title echoes)
+    ocr = FakeOcr({
+        "a.jpg": {
+            "QuiQ": "QUIQ",
+            "Edelweiss": "Edelweiss",
+            "Cider P@rty": "Cider P@rty",
+        },
+    })
+    quiq = _make_track(tmp_path, "QuiQ")
+    edel = _make_track(tmp_path, "Edelweiss")
+    cider = _make_track(tmp_path, "Cider P@rty")
+    mapper = BookletMapper(tmp_path, ocr)
+
+    per_track, phantoms = mapper.collect_album_songs([Path("a.jpg")], [quiq, edel, cider])
+
+    # title-only blocks are NOT treated as lyrics -> tracks absent (skipped later)
+    assert quiq not in per_track
+    assert edel not in per_track
+    assert cider not in per_track
+    # but reported as phantoms so the user can see them
+    assert any("QuiQ" in label for _p, label in phantoms)
+    assert any("Edelweiss" in label for _p, label in phantoms)
+
+
+def test_real_lyric_block_not_rejected(tmp_path):
+    # a genuine multi-line lyric page survives the title-only check
+    ocr = FakeOcr({
+        "a.jpg": {"NOIZY BOUNCE": "line one\nline two\nline three\nline four"},
+    })
+    track = _make_track(tmp_path, "NOIZY BOUNCE")
+    mapper = BookletMapper(tmp_path, ocr)
+    per_track, _phantoms = mapper.collect_album_songs([Path("a.jpg")], [track])
+    assert track in per_track
+    assert len(per_track[track].lines) == 4
+
+
+def test_short_real_lyric_not_title_only(tmp_path):
+    # a 2-line real lyric block whose text is NOT just the title survives
+    ocr = FakeOcr({
+        "a.jpg": {"Some Song": "さよならの前に\nもう一度だけ"},
+    })
+    track = _make_track(tmp_path, "Some Song")
+    mapper = BookletMapper(tmp_path, ocr)
+    per_track, _phantoms = mapper.collect_album_songs([Path("a.jpg")], [track])
+    assert track in per_track
