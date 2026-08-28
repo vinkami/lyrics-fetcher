@@ -108,12 +108,54 @@ def _cmd_full(args: argparse.Namespace) -> int:
     )
     result = pipe.run(audio=audio, out_dir=Path(args.out_dir), image=image,
                       write_html=not args.no_html,
-                      prefer_ocr=bool(image) and not args.web_first)
+                      prefer_ocr=bool(image) and not args.web_first,
+                      jellyfin=args.jellyfin)
     print(f"source: {result.lyrics_source}")
     print(f"lrc:   {result.lrc_path}")
     if result.html_path:
         print(f"html:  {result.html_path}")
     print(f"lines: {result.lines}")
+    return 0
+
+
+def _cmd_album(args: argparse.Namespace) -> int:
+    """Process every track in an album folder (batch)."""
+    from .batch import batch_album
+
+    album_dir = Path(args.album_dir)
+    if not album_dir.is_dir():
+        print(f"Album dir not found: {album_dir}", file=sys.stderr)
+        return 2
+    booklet_dir = Path(args.booklet) if args.booklet else None
+
+    # OCR engine always available for batch (matching needs to read page headers)
+    ocr_engine = VLMOcr(api=args.api, model=args.model)
+    pipe = Pipeline(
+        aligner=WhisperCppAligner(
+            binary=Path(args.binary) if args.binary else DEFAULT_WHISPER_BIN,
+            model=Path(args.model_whisper) if args.model_whisper else DEFAULT_WHISPER_MODEL,
+        ),
+        ocr=ocr_engine,
+    )
+
+    processed, unmatched = batch_album(
+        album_dir=album_dir,
+        out_dir=Path(args.out_dir) if not args.jellyfin else None,
+        booklet_dir=booklet_dir,
+        jellyfin=args.jellyfin,
+        pipeline=pipe,
+        prefer_ocr=not args.web_first,
+        write_html=not args.no_html,
+        verbose=not args.quiet,
+    )
+
+    print(f"\nProcessed {len(processed)} songs -> LRC:")
+    for p in processed:
+        print(f"  {p}")
+    if unmatched:
+        print(f"\n{len(unmatched)} booklet pages unmatched:")
+        for page, reason in unmatched:
+            print(f"  {page.name}: {reason}")
     return 0
 
 
@@ -159,10 +201,29 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("--binary", default=None)
     pfull.add_argument("--model-whisper", default=None)
     pfull.add_argument("--no-html", action="store_true", help="skip HTML companion")
+    pfull.add_argument("--jellyfin", action="store_true",
+                       help="write .lrc next to the audio file (Jellyfin layout)")
     pfull.add_argument("--web-first", action="store_true",
                        help="when --image given, try web fetchers before OCR "
                             "(default: OCR first, it's authoritative for the album)")
     pfull.set_defaults(func=_cmd_full)
+
+    pal = sub.add_parser("album", help="Batch-process every track in an album folder")
+    pal.add_argument("album_dir")
+    pal.add_argument("--booklet", default=None,
+                     help="path to a booklet image folder (default: <album>/booklet)")
+    pal.add_argument("-o", "--out-dir", default="out")
+    pal.add_argument("--api", default="http://127.0.0.1:8081/v1/chat/completions")
+    pal.add_argument("--model", default="qwen3.5-9b")
+    pal.add_argument("--binary", default=None)
+    pal.add_argument("--model-whisper", default=None)
+    pal.add_argument("--no-html", action="store_true")
+    pal.add_argument("--jellyfin", action="store_true",
+                     help="write .lrc next to each audio file (Jellyfin layout)")
+    pal.add_argument("--web-first", action="store_true",
+                     help="try web fetchers before OCR for each track")
+    pal.add_argument("-q", "--quiet", action="store_true")
+    pal.set_defaults(func=_cmd_album)
     return p
 
 

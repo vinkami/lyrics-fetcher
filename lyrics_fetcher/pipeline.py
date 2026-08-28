@@ -47,13 +47,16 @@ class Pipeline:
 
     # ---- lyrics acquisition (web or OCR) ----
     def _fetch_lyrics(self, meta: SongMeta, image: Path | None = None,
-                      prefer_ocr: bool = False) -> Lyrics:
+                      prefer_ocr: bool = False, lyrics: Lyrics | None = None) -> Lyrics:
         """Get lyrics for a song.
 
-        By default web fetchers are tried first. When a booklet ``image`` is
-        provided AND ``prefer_ocr`` is true, OCR is tried first (it's
-        authoritative for that exact album); web fetchers are a fallback.
+        If ``lyrics`` is given it is used directly (caller already acquired
+        them, e.g. batch OCR). Otherwise tries web fetchers first; when a
+        booklet ``image`` is provided AND ``prefer_ocr`` is true, OCR is tried
+        first (it's authoritative for that exact album), web as fallback.
         """
+        if lyrics:
+            return lyrics
         # optional OCR-first mode (used when the user explicitly gives a booklet)
         if prefer_ocr and self.ocr and image and image.exists():
             ocr_lyrics = self.ocr.fetch(image, meta.title, meta.artist)
@@ -79,13 +82,27 @@ class Pipeline:
     def run(
         self,
         audio: Path,
-        out_dir: Path,
+        out_dir: Path | None = None,
         image: Path | None = None,
         write_html: bool = True,
         prefer_ocr: bool = False,
+        jellyfin: bool = False,
+        lyrics: Lyrics | None = None,
     ) -> PipelineResult:
+        """Process one song.
+
+        Args:
+            audio: path to the audio file.
+            out_dir: directory for outputs. Ignored when ``jellyfin`` is True.
+            image: optional booklet photo (uses OCR).
+            write_html: also write a companion .html.
+            prefer_ocr: try OCR before web when an image is given.
+            jellyfin: write the .lrc next to the audio file (same stem) so
+                Jellyfin/media players pick it up; also the .html alongside.
+            lyrics: pre-acquired lyrics (avoids re-OCR in batch).
+        """
         meta = SongMeta.from_path(audio)
-        lyrics = self._fetch_lyrics(meta, image, prefer_ocr=prefer_ocr)
+        lyrics = self._fetch_lyrics(meta, image, prefer_ocr=prefer_ocr, lyrics=lyrics)
         if not lyrics:
             raise RuntimeError(
                 f"No lyrics found for {meta.title} (web fetchers failed and no OCR image given)"
@@ -93,18 +110,26 @@ class Pipeline:
 
         timed = self.aligner.align(audio, lyrics)
 
-        out_dir.mkdir(parents=True, exist_ok=True)
-        stem = audio.stem
         lrc_writer = LrcWriter()
+        html_writer = HtmlWriter(lyrics)
+
+        # Jellyfin layout: sibling of the audio file, same basename (.flac -> .lrc).
+        # Otherwise write into out_dir.
+        target_dir = audio.parent if jellyfin else out_dir
+        if not target_dir:
+            raise ValueError("out_dir is required when jellyfin=False")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        stem = audio.stem
+
         lrc_path = lrc_writer.write(
-            out_dir / f"{stem}.lrc", meta.title or lyrics.title,
+            target_dir / f"{stem}.lrc", meta.title or lyrics.title,
             meta.artist or lyrics.artist, meta.album, timed,
         )
 
         html_path = None
         if write_html:
-            html_path = HtmlWriter(lyrics).write(
-                out_dir / f"{stem}.html", meta.title or lyrics.title,
+            html_path = html_writer.write(
+                target_dir / f"{stem}.html", meta.title or lyrics.title,
                 meta.artist or lyrics.artist, meta.album, timed,
             )
 
