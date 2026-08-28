@@ -112,11 +112,11 @@ Take plain-text lyrics + audio file → produce a `.lrc` file with timestamps pe
 - Cons: needs training data for singing voices; may need custom models.
 
 #### Option B: Whisper + Line Segmentation
-- Run Whisper on the full song to get word-level timestamps.
-- Map words to lyrics lines (fuzzy match).
-- Assign line timestamps from word boundaries.
+- **CHOSEN (2026-08-28).** Run whisper.cpp (medium, Vulkan) on the full song to get line-level timestamps. MAP lyric lines to whisper segments via **monotonic DP forced alignment** (`align_lines` in `poc/08_pipeline.py`): segments must map in non-decreasing order, maximizing cumulative fuzzy-match similarity.
+- **Why monotonic (not greedy best-match):** greedy mapped both identical repeated-chorus lines to the SAME (first) segment, producing out-of-order/duplicated timestamps. The non-decreasing DP keeps each chorus occurrence in correct temporal order — verified on a synthetic repeated-chorus case AND on real 天ノ弱 (all timestamps strictly non-decreasing, lines at 0/5/10/15/39/44/49/54s). Tests: `poc/test_alignment.py`, `poc/test_ameno_alignment.py`.
+- **Integration:** OCR (Qwen3.5-9B) → known lyrics → align with whisper → `.lrc`. End-to-end proven on ASTEROID アンデッド (`poc/08_pipeline.py`).
 - Pros: no extra training, works out of box.
-- Cons: Whisper may miss syllables in fast songs; singing mode needed.
+- Cons: Whisper may miss syllables in fast songs; medium model mitigates (best accuracy on synthetic vocals).
 
 #### Option C: Manual / Semi-Automatic
 - User provides approximate timing or edits manually.
