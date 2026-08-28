@@ -46,7 +46,21 @@ class Pipeline:
         self.aligner = aligner if aligner is not None else WhisperCppAligner()
 
     # ---- lyrics acquisition (web or OCR) ----
-    def _fetch_lyrics(self, meta: SongMeta, image: Path | None = None) -> Lyrics:
+    def _fetch_lyrics(self, meta: SongMeta, image: Path | None = None,
+                      prefer_ocr: bool = False) -> Lyrics:
+        """Get lyrics for a song.
+
+        By default web fetchers are tried first. When a booklet ``image`` is
+        provided AND ``prefer_ocr`` is true, OCR is tried first (it's
+        authoritative for that exact album); web fetchers are a fallback.
+        """
+        # optional OCR-first mode (used when the user explicitly gives a booklet)
+        if prefer_ocr and self.ocr and image and image.exists():
+            ocr_lyrics = self.ocr.fetch(image, meta.title, meta.artist)
+            if ocr_lyrics:
+                return ocr_lyrics
+
+        # web fetchers (orchestrator, or a single fetcher)
         if isinstance(self.fetcher, FetchOrchestrator):
             lyrics = self.fetcher.fetch_best(meta.title, meta.artist)
             if lyrics:
@@ -56,7 +70,7 @@ class Pipeline:
             if lyrics:
                 return lyrics
 
-        # fall back to OCR on a booklet image
+        # web-first fallback: OCR if no web match
         if self.ocr and image and image.exists():
             return self.ocr.fetch(image, meta.title, meta.artist)
         return Lyrics(source="none", title=meta.title, artist=meta.artist)
@@ -68,9 +82,10 @@ class Pipeline:
         out_dir: Path,
         image: Path | None = None,
         write_html: bool = True,
+        prefer_ocr: bool = False,
     ) -> PipelineResult:
         meta = SongMeta.from_path(audio)
-        lyrics = self._fetch_lyrics(meta, image)
+        lyrics = self._fetch_lyrics(meta, image, prefer_ocr=prefer_ocr)
         if not lyrics:
             raise RuntimeError(
                 f"No lyrics found for {meta.title} (web fetchers failed and no OCR image given)"

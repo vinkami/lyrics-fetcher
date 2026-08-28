@@ -92,6 +92,12 @@ class SilentBlueFetcher(BaseFetcher):
         if not content:
             return found
 
+        # verify the resolved page title actually matches the requested song
+        from ..utils import title_match
+
+        if not title_match(title, pt):
+            return found
+
         lines = self._section_lines(content, "Lyrics")
         if lines:
             found.title = pt

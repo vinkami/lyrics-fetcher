@@ -97,7 +97,7 @@ def _cmd_compile(args: argparse.Namespace) -> int:
 def _cmd_full(args: argparse.Namespace) -> int:
     audio = Path(args.audio)
     image = Path(args.image) if args.image else None
-    # ocr available only if --image given (vision server must be reachable)
+    # OCR available only if --image given (vision server must be reachable)
     ocr_engine = VLMOcr(api=args.api, model=args.model) if image else None
     pipe = Pipeline(
         aligner=WhisperCppAligner(
@@ -107,7 +107,8 @@ def _cmd_full(args: argparse.Namespace) -> int:
         ocr=ocr_engine,
     )
     result = pipe.run(audio=audio, out_dir=Path(args.out_dir), image=image,
-                      write_html=not args.no_html)
+                      write_html=not args.no_html,
+                      prefer_ocr=bool(image) and not args.web_first)
     print(f"source: {result.lyrics_source}")
     print(f"lrc:   {result.lrc_path}")
     if result.html_path:
@@ -158,6 +159,9 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("--binary", default=None)
     pfull.add_argument("--model-whisper", default=None)
     pfull.add_argument("--no-html", action="store_true", help="skip HTML companion")
+    pfull.add_argument("--web-first", action="store_true",
+                       help="when --image given, try web fetchers before OCR "
+                            "(default: OCR first, it's authoritative for the album)")
     pfull.set_defaults(func=_cmd_full)
     return p
 
