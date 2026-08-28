@@ -36,6 +36,11 @@ url = "https://download.pytorch.org/whl/rocm7.2"
 [tool.uv.sources]
 transformers = { git = "https://github.com/huggingface/transformers.git" }
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["lyrics_fetcher"]
 

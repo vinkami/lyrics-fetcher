@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        # These note: torch/torchaudio come from the ROCm wheel index and
+        # transformers from git main (see pyproject [[tool.uv.index]] /
+        # [tool.uv.sources]). --index-strategy unsafe-best-match lets non-torch
+        # deps still resolve from PyPI.
+        run: uv sync --index-strategy unsafe-best-match
+
+      - name: Run tests
+        # The aligner/OCR tests are pure-logic (no GPU/whisper/vision server);
+        # they must pass on the CI runner without any hardware.
+        run: uv run pytest -q
