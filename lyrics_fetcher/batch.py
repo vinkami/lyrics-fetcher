@@ -20,7 +20,13 @@ from pathlib import Path
 
 from .models import LyricLine, Lyrics, SongMeta
 from .pipeline import Pipeline
-from .utils import MUSIC_DIR
+from .utils import MUSIC_DIR, _norm_ja
+
+
+def _fuzz_ratio(a: str, b: str) -> int:
+    from thefuzz import fuzz
+
+    return fuzz.ratio(a, b)
 
 
 class BookletMapper:
@@ -61,6 +67,29 @@ class BookletMapper:
         return sorted(p for p in base.rglob("*") if p.suffix.lower() in exts)
 
     # ---- multi-song aggregation ----
+    @staticmethod
+    def _is_title_only_block(text: str, label: str) -> bool:
+        """True if a VLM block is just a title/header, not real lyrics.
+
+        Index/title pages (e.g. a booklet section listing song names) come back
+        as blocks whose content is only the printed song title — a single line
+        that equals the title. Treating that as lyrics produces a useless
+        ``[00:00.00]QUIQ`` line for a song that has no lyrics. Returns True when
+        the block is short and its cleaned text matches the label (title) itself.
+        """
+        lines = [l for l in (x.strip() for x in text.splitlines()) if l]
+        if not lines:
+            return False
+        if len(lines) >= 3:
+            return False  # real lyric pages have multiple lines
+        lbl = _norm_ja(label)
+        if not lbl:
+            return False
+        joined = _norm_ja("".join(lines))
+        # whole block == the title, or title dominates it (header/echo)
+        return bool(joined) and (lbl in joined or joined in lbl
+                                 or _fuzz_ratio(joined, lbl) >= 75)
+
     def collect_album_songs(self, images: list[Path],
                             tracks: list[Path]
                             ) -> tuple[dict[Path, Lyrics], list[tuple[str, str]]]:
@@ -72,7 +101,8 @@ class BookletMapper:
             track has no lyrics on any page;
           - ``phantoms`` = [(page_name, song_label), ...] for blocks that matched
             no on-disc track (e.g. a song-section header the VLM split out, like
-            "Sanctus" / "レクイエム" inside RondeauX).
+            "Sanctus" / "レクイエム" inside RondeauX), or that are title-only
+            headers (index/title pages), which are not lyrics.
         """
         # index canonical track title -> path
         by_title: dict[str, Path] = {}
@@ -90,6 +120,11 @@ class BookletMapper:
             blocks = self.ocr.extract_songs(img, known_titles=known)
             for label, text in blocks.items():
                 track = by_title.get(label)
+                if track is not None and self._is_title_only_block(text, label):
+                    # a title-only block (index page) is NOT lyrics for this
+                    # track; report it so it isn't silently turned into a line
+                    phantoms.append((img.name, f"{label} (title-only)"))
+                    continue
                 if track is not None:
                     per_track_blocks[track].append(text)
                 else:
