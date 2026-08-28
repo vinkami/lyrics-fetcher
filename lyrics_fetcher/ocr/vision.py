@@ -29,6 +29,20 @@ VLM_PROMPT = (
     "If the page contains song title/artist headers, output them as [title] ... style lines."
 )
 
+# Post-OCR cleanup prompt: fixes minor VLM slips (dropped particles/morphemes,
+# wrong kanji) WITHOUT re-reading the image. Deliberately asks to change as
+# little as possible — we trust the transcription, only correct obvious slips.
+CLEANUP_PROMPT = (
+    "Below is an OCR transcription of Japanese song lyrics from a booklet. "
+    "Fix ONLY clear transcription errors: a dropped particle/morpheme (e.g. "
+    "missing の/一), a wrong kanji that's obviously a misread, or an awkward "
+    "morph that breaks grammar. Keep every line's meaning and line breaks; do "
+    "not reformat, do not add/remove lines, do not translate, do not editorialize. "
+    "If a line looks fine, output it unchanged. Output only the corrected lines, "
+    "one per line, nothing else.\n\n"
+    "LYRICS:\n{text}"
+)
+
 MAX_SIDE = 1568
 
 
@@ -36,11 +50,27 @@ class VLMOcr(BaseOCR):
     name = "ocr-vlm"
 
     def __init__(self, api: str = DEFAULT_API, model: str = DEFAULT_MODEL,
-                 timeout: int = 600, cache=None):
+                 timeout: int = 600, cache=None, clean: bool = True):
         self.api = api
         self.model = model
         self.timeout = timeout
         self.cache = cache
+        self.clean = clean
+
+    def _chat(self, prompt: str, image: Path | None = None, max_tokens: int = 2048) -> str:
+        """Call the llama-server vision/text endpoint; returns assistant text."""
+        content = [{"type": "text", "text": prompt}]
+        if image is not None:
+            content.append({"type": "image_url", "image_url": {"url": self._encode(image)}})
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": 0.1,
+            "max_tokens": max_tokens,
+        }
+        r = requests.post(self.api, json=payload, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
 
     @staticmethod
     def _encode(image: Path) -> str:
@@ -54,27 +84,22 @@ class VLMOcr(BaseOCR):
         b64 = base64.b64encode(buf.getvalue()).decode()
         return f"data:image/jpeg;base64,{b64}"
 
+    def cleanup(self, text: str) -> str:
+        """Post-OCR cleanup pass: fix minor slips (dropped particles/kanji)."""
+        return self._chat(CLEANUP_PROMPT.format(text=text), max_tokens=2048).strip()
+
     def ocr(self, image: Path) -> str:
         # cache hit by absolute image path
         if self.cache:
             hit = self.cache.get_ocr(image)
             if hit is not None:
                 return hit
-        payload = {
-            "model": self.model,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": VLM_PROMPT},
-                    {"type": "image_url", "image_url": {"url": self._encode(image)}},
-                ],
-            }],
-            "temperature": 0.1,
-            "max_tokens": 2048,
-        }
-        r = requests.post(self.api, json=payload, timeout=self.timeout)
-        r.raise_for_status()
-        text = r.json()["choices"][0]["message"]["content"]
+        text = self._chat(VLM_PROMPT, image=image)
+        if self.clean:
+            try:
+                text = self.cleanup(text)
+            except Exception:
+                pass  # cleanup is best-effort; keep raw transcription
         if self.cache:
             self.cache.put_ocr(image, text)
         return text
