@@ -197,6 +197,7 @@ uv run lyrics-fetcher full "/mnt/fnos/storage/Music/光収容の倉庫 ASTEROID/
     --image ".../booklet/20260828_060250.jpg" --jellyfin --aligner whisper
 uv run lyrics-fetcher album "/mnt/fnos/storage/Music/光収容の倉庫 ASTEROID" --jellyfin
 uv run lyrics-fetcher manual song.flac lyrics.txt -o out.lrc
+uv run lyrics-fetcher cross-check song.flac lyrics.txt --tolerance 2.5
 
 # branch + PR flow
 git checkout -b feat/xxx && git add -A && git commit -m "feat: ..."

@@ -40,9 +40,10 @@ For each song it:
 ```
 lyrics-fetcher/
 ├── lyrics_fetcher/
-│   ├── cli.py                  # CLI (fetch/ocr/compile/full/album/manual)
+│   ├── cli.py                  # CLI (fetch/ocr/compile/cross-check/full/album/manual)
 │   ├── pipeline.py             # end-to-end: fetch/OCR -> align -> write
 │   ├── batch.py                # album batch + booklet->track mapper
+│   ├── crosscheck.py           # compare whisper vs Qwen3 timings (cross-check)
 │   ├── cache.py                # SQLite lyrics + OCR cache
 │   ├── models.py               # SongMeta, LyricLine, Lyrics
 │   ├── utils.py                # HTTP session, title/artist matching, paths
@@ -253,12 +254,26 @@ lyrics-fetcher album "/music/Album Name" --jellyfin
 
 # Manually time lyrics by tapping a key per line (for songs that defeat AI)
 lyrics-fetcher manual song.flac lyrics.txt -o song.lrc
+
+# Cross-check: run whisper AND Qwen3, flag lines where timings diverge
+# (e.g. > 2.5s apart) so you can hand-fix only the drifting lines
+lyrics-fetcher cross-check song.flac lyrics.txt --tolerance 2.5
+lyrics-fetcher cross-check song.flac lyrics.txt -v   # show every line
 ```
 
 ### Alignment engine selection
 `--aligner whisper` (default) uses whisper.cpp with anchor-based DP; `album`
 mode additionally merges large-v3-turbo.
 `--aligner qwen3` uses Qwen3-ForcedAligner (Japanese-capable, independent).
+
+### Cross-check mode
+Whisper (Vulkan) and Qwen3-ForcedAligner are **independent** timing sources.
+`cross-check` runs both on a song and reports every line whose two start times
+differ by more than `--tolerance` seconds (default 2.5), so you can spot lines
+where automatic alignment drifted from the true timing and fix just those with
+`manual`. Exits non-zero when any line drifted or is missing (handy for
+scripts). Whisper runs first as a subprocess so its video memory is freed before
+Qwen3 loads in-process — the two don't need to be resident at once.
 
 ### Manual alignment controls
 After the "GO" countdown, press **RETURN** each time a line starts:
