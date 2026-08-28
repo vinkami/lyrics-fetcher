@@ -72,8 +72,14 @@ Given a song title + artist, produce plain-text lyrics (one line per verse/choru
 #### 1c. OCR from Physical Booklets
 - User provides photos/scans of album lyric booklets.
 - Pipeline: image → OCR → cleaned text.
-- **TESTED (see `poc/ocr.py`):** Vision LLM (Qwen3.8-27B via llama-server on RX 9060 XT) is **far superior** to Tesseract for real phone photos (uneven lighting, no scanner). VLM transcribed ASTEROID アンデッド with accurate kanji + line breaks (~2 minor errors); Tesseract lost most lines and garbled kanji. VLM also handles maimai prism layouts and manosaba artificial-language lyrics.
-- **Decision:** Vision LLM = primary OCR; Tesseract (jpn+eng) = CPU fallback for well-lit flat pages.
+- **TESTED (see `poc/ocr.py`):** Vision LLM is **far superior** to Tesseract for real phone photos (uneven lighting, no scanner). VLM transcribed ASTEROID アンデッド with accurate kanji + line breaks; Tesseract lost most lines and garbled kanji. VLM also handles maimai prism layouts and manosaba artificial-language lyrics.
+- **Model decision (2026-08-28):** **Qwen3.5-9B (Q4_K_M) via llama-server on RX 9060 XT.** Tested head-to-head on the same ASTEROID page:
+  - **Qwen3.5-9B** ✅ ~7.6GB VRAM; high accuracy (説明もしない, 憑かれた all correct)
+  - Gemma-4-12B ❌ garbled mojibake — cannot OCR Japanese
+  - Qwen3.8-27B (earlier) ✅ decent but worse than 9B and used 16.4GB
+  - **Qwen sent to `/mnt/fnos/storage/ai-models/`** (NAS), served by `~/AI/start-vision` on port 8081, my own config `~/AI/vision-config.ini` (user's config untouched).
+- **VRAM strategy:** Qwen resident ~7.6GB leaves ~9GB on the 16GB 9060 XT — enough for **whisper-medium (~2.5GB) to run simultaneously** (verified: both coexist, whisper ran to completion).
+- **Decision:** Vision LLM (Qwen3.5-9B) = primary OCR; Tesseract (jpn+eng) = CPU fallback for well-lit flat pages.
 - Post-processing: LLM cleanup to fix minor errors, remove page numbers.
 
 #### 1d. AI Lyrics Recognition from Audio
