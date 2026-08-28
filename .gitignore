@@ -7,6 +7,7 @@ uv.lock
 # test artifacts
 poc/audio/
 poc/out/
+out/
 vendor/
 *.wav
 *.srt
