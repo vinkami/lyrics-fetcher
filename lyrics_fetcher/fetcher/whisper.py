@@ -32,6 +32,55 @@ def _is_lyric_line(text: str) -> bool:
     return bool(_HAVE_TEXT_RE.search(stripped))
 
 
+def filter_whisper_lines(segments: list[dict]) -> list[LyricLine]:
+    """Turn whisper segments into lyric lines, dropping noise.
+
+    Two pass-filters, in order:
+      1. drop music-note-only / empty segments (instrumental w/ no vocals), and
+      2. drop HALLUCINATION LOOPS — whisper repeating one phrase many times over
+         a song (告げよ's "メルエリアルリン" ×137, or ATLAS RUSH looping
+         "「Santus Crush」"). A real song repeats a chorus a few times; a loop is
+         a phrase appearing a large number of times. If one phrase dominates the
+         whole track it's a hallucination, not lyrics — treat as no lyrics.
+
+    Returns a flat lyric-line list (empty when nothing real remains, so the
+    pipeline treats the track as "no lyrics" and skips it).
+    """
+    cands = [s for s in segments if _is_lyric_line(s["text"])]
+    if not cands:
+        return []
+
+    def _norm(t: str) -> str:
+        return _MUSIC_NOTE_RE.sub("", t).strip()
+
+    # count every phrase over the WHOLE transcription (before dedup), so a loop
+    # that repeats at scattered timestamps is visible.
+    freq: dict[str, int] = {}
+    for s in cands:
+        n = _norm(s["text"])
+        freq[n] = freq.get(n, 0) + 1
+
+    # a phrase appearing >= this many times is a hallucination loop. Real songs
+    # (even Cryptarithm's 3x chorus) usually repeat < 4 times.
+    LOOP_REPEATS = 4
+    loop_total = sum(c for c in freq.values() if c >= LOOP_REPEATS)
+    if loop_total >= LOOP_REPEATS and loop_total >= 0.5 * len(cands):
+        # the track is dominated by one (or a few) repeated hallucinated phrase
+        return []
+
+    # remove loop phrases, then collapse exact consecutive repeats
+    keep = [s for s in cands if freq[_norm(s["text"])] < LOOP_REPEATS]
+    cleaned: list[LyricLine] = []
+    prev_norm = None
+    for s in keep:
+        n = _norm(s["text"])
+        if n == prev_norm:
+            continue
+        cleaned.append(LyricLine(text=s["text"], start=s["from"] / 1000.0))
+        prev_norm = n
+    return cleaned
+
+
 class WhisperFetcher(BaseFetcher):
     """Fetch lyrics by transcribing the audio with whisper.cpp.
 
@@ -54,13 +103,7 @@ class WhisperFetcher(BaseFetcher):
         if not audio.exists():
             return Lyrics(source=self.name, title=title, artist=artist)
         segs = self.aligner._segments(audio)
-        # drop music-note-/empty-only segments (instrumental with no vocals);
-        # if nothing real remains the fetch returns empty Lyrics so the pipeline
-        # treats the track as "no lyrics" and skips it.
-        lines = [
-            LyricLine(text=s["text"], start=s["from"] / 1000.0)
-            for s in segs if _is_lyric_line(s["text"])
-        ]
+        lines = filter_whisper_lines(segs)
         if not lines:
             return Lyrics(source=self.name, title=str(audio.stem), artist=artist)
         return Lyrics(source=self.name, title=str(audio.stem), artist=artist, lines=lines)
