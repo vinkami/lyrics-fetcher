@@ -1,1 +1,278 @@
 # lyrics-fetcher
+
+Fetch song lyrics (from the web, album booklets, or AI) and align them to
+timestamps so you can host `.lrc` + a furigana `.html` companion next to your
+music for Jellyfin / media players.
+
+Built around real-world needs: many songs are obscure (maimai game tracks, less
+popular vocaloid, albums like ASTEROID that aren't on MusicBrainz), so the
+project tries multiple sources in order and falls back gracefully.
+
+---
+
+## What it does
+
+For each song it:
+
+1. **Reads metadata** from the audio file tags (title, artist, album).
+2. **Fetches lyrics** from, in order:
+   - **Web fetchers**: [utaten](https://utaten.com) (vocaloid + furigana),
+     [Genius](https://genius.com), [SilentBlue.RemyWiki](https://silentblue.remywiki.com)
+     (maimai/chunithm/ongeki rhythm-game songs). Each is a class under
+     `lyrics_fetcher/fetcher/`, with song-match disambiguation (a requested
+     title/artist is verified against each candidate before accepting).
+   - **OCR of a booklet photo** (if you provide one): a local vision LLM
+     (Qwen3.5-9B) reads the printed lyrics. Good for albums not on any database.
+   - **AI recognition** (last resort): whisper transcribes the audio directly.
+3. **Aligns** the known lyric lines to timestamps using:
+   - **whisper.cpp** (Vulkan on the RX 9060 XT, medium model) with monotonic
+     anchor-based DP — interpolates between confident matches.
+   - **Qwen3-ForcedAligner** (optional LLM aligner, Japanese support) as a
+     second, independent timing source.
+   - **`manual`** — tap-a-key timing by ear for songs automation can't handle.
+4. **Writes** a standard `.lrc` (Jellyfin-compatible) and a `.html` companion
+   with `<ruby>` furigana.
+
+---
+
+## Project layout
+
+```
+lyrics-fetcher/
+├── lyrics_fetcher/
+│   ├── cli.py                  # CLI (fetch/ocr/compile/full/album/manual)
+│   ├── pipeline.py             # end-to-end: fetch/OCR -> align -> write
+│   ├── batch.py                # album batch + booklet->track mapper
+│   ├── cache.py                # SQLite lyrics + OCR cache
+│   ├── models.py               # SongMeta, LyricLine, Lyrics
+│   ├── utils.py                # HTTP session, title/artist matching, paths
+│   ├── manual_align.py         # interactive tap-a-key timer
+│   ├── fetcher/                # each source = one class
+│   │   ├── base.py  utaten.py  genius.py  silentblue.py  whisper.py  orchestrator.py
+│   ├── ocr/                    # booklet OCR as a lyrics source
+│   │   ├── base.py  vision.py (Qwen3.5-9B VLM)  tesseract.py (CPU fallback)
+│   ├── aligner/
+│   │   ├── base.py  whisper_cpp.py  faster_whisper_aligner.py  qwen3_forced_aligner.py
+│   └── output/writers.py       # LRC + HTML(furigana) writers
+├── poc/                        # proof-of-concept scripts (single-song demos)
+├── PLAN.md                     # design decisions & evolution notes
+└── pyproject.toml              # uv project + dependencies (incl. ROCm torch)
+```
+
+---
+
+## Setup
+
+Requires: **Python 3.12**, **uv** (package manager), a system with the needed
+GPU/CPU bits below. This README documents the canonical setup used by the author
+(RX 9060 XT, ROCm).
+
+### 1. Clone & install Python deps
+
+```bash
+git clone git@github.com:vinkami/lyrics-fetcher.git   # or your remote
+cd lyrics-fetcher
+uv sync
+```
+
+`uv sync` reads `pyproject.toml`. Note two special dependency sources that
+`uv sync` handles:
+
+- **torch / torchaudio** come from the **PyTorch ROCm wheel index**, not PyPI:
+  ```ini
+  [[tool.uv.index]]
+  url = "https://download.pytorch.org/whl/rocm7.2"
+  ```
+  (This is why torch isn't on PyPI — AMD ships ROCm wheels separately.) uv
+  uses `--index-strategy unsafe-best-match` so non-torch deps still resolve
+  from PyPI.
+- **transformers** is pinned to the **git main** branch, needed for the
+  `qwen3_asr` architecture used by Qwen3-ForcedAligner:
+  ```ini
+  [tool.uv.sources]
+  transformers = { git = "https://github.com/huggingface/transformers.git" }
+  ```
+
+If you add/remove deps, re-run:
+```bash
+uv sync --index-strategy unsafe-best-match
+```
+
+### 2. `whisper.cpp` (the primary aligner)
+
+Build with the Vulkan backend so it runs on the AMD GPU (it is a separate C++
+project, not a pip package):
+
+```bash
+git clone https://github.com/ggerganov/whisper.cpp ~/whisper.cpp
+cd ~/whisper.cpp
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build --config Release -j
+```
+
+Download the models it uses (paths are defaults in
+`lyrics_fetcher/aligner/whisper_cpp.py`):
+```bash
+cd ~/whisper.cpp
+./models/download-ggml-model.sh medium          # primary: ggml-medium.bin
+./models/download-ggml-model.sh large-v3-turbo  # extra for hallucinating songs
+```
+
+Required model files:
+- `~/whisper.cpp/models/ggml-medium.bin`
+- `~/whisper.cpp/models/ggml-large-v3-turbo.bin` (used by `album` mode to merge
+  a second opinion)
+
+Check it works:
+```bash
+~/whisper.cpp/build/bin/whisper-cli -m ~/whisper.cpp/models/ggml-medium.bin -l ja -f some_song.flac
+```
+
+### 3. Qwen3.5-9B vision model (booklet OCR)
+
+Needed for the `ocr` / `full --image` paths. It runs via a **llama-server**
+(ROCm) that you keep running on port **8081**.
+
+1. Put the model on the NAS (or wherever you keep models):
+   ```bash
+   mkdir -p /mnt/fnos/storage/ai-models/qwen3.5-9b
+   # download from huggingface.co/unsloth/Qwen3.5-9B-GGUF:
+   #   Qwen3.5-9B-Q4_K_M.gguf   (~5.7 GB)
+   #   mmproj-BF16.gguf         (~0.9 GB, required for vision)
+   ```
+   (Store models on a drive with room — the Qwen vision model is ~6.6 GB, the
+   forced aligner ~1.8 GB.)
+
+2. Create a start script (`~/AI/start-vision`) and config (`~/AI/vision-config.ini`).
+   The scripts in `~/AI` are the author's own; the repo expects a vision server
+   at `127.0.0.1:8081`. A minimal start:
+   ```bash
+   # ~/AI/start-vision
+   /home/vinkami/AI/llama-b10647-rocm/llama-server \
+     --models-preset /home/vinkami/AI/vision-config.ini \
+     --alias qwen3.5-9b --host 127.0.0.1 --port 8081
+   ```
+   The `vision-config.ini` declares the model + `dev = ROCm0` + a modest
+   context (`ctx-size = 16384`) so ~7.6 GB of VRAM is used, leaving room for
+   whisper to share the 16 GB card.
+
+3. Start it:
+   ```bash
+   ~/AI/start-vision qwen3.5-9b
+   ```
+
+> **Model-download note (SMB/NAS):** `huggingface-cli download` fails with
+> `PermissionError ... .lock` on some SMB mounts (file-lock not supported).
+> If that happens, use plain `wget -c` on the GGUF files directly.
+
+### 4. Qwen3-ForcedAligner (optional second aligner)
+
+Supports Japanese + ~10 languages, LLM-based forced alignment of *known* text.
+It is the `--aligner qwen3` option and a useful independent timing source
+(compare against whisper to spot drifting lines).
+
+1. Download the model to the NAS:
+   ```bash
+   mkdir -p /mnt/fnos/storage/ai-models/qwen3-forcedaligner
+   huggingface-cli download Qwen/Qwen3-ForcedAligner-0.6B-hf \
+     --local-dir /mnt/fnos/storage/ai-models/qwen3-forcedaligner/model
+   ```
+   (If the lock issue above bites, wget the 8 files from
+   `https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B-hf/resolve/main/...`.)
+
+2. Its deps (torch ROCm, transformers git-main, nagisa, librosa) are already in
+   `pyproject.toml` — `uv sync` installs them.
+
+3. The aligner class defaults to that model path
+   (`lyrics_fetcher/aligner/qwen3_forced_aligner.py::LOCAL_MODEL`), so it's
+   ready to use once `uv sync` + the model download are done.
+
+> **Why git-main transformers & ROCm torch?** The `qwen3_asr` architecture the
+> aligner needs is only in transformers' dev/main (the 4.57.6 PyPI pin predates
+> it), and the torch wheels for AMD only exist on the ROCm index. Trying the
+> `qwen-asr` pip package instead instantiates the wrong 12.7B model and OOMs;
+> use `AutoModelForTokenClassification` (see the aligner).
+
+### 5. `ffplay` (for the `manual` aligner)
+
+Part of ffmpeg — `sudo apt install ffmpeg`. Needed only for the interactive
+manual timing command.
+
+---
+
+## Usage
+
+The CLI is installed as `lyrics-fetcher` (or `uv run lyrics-fetcher ...`).
+
+```bash
+# Fetch lyrics for a song (tries all sources, shows which matched)
+lyrics-fetcher fetch "天ノ弱" --artist "164"
+
+# Fetch from one source
+lyrics-fetcher fetch "Song Title" --source utaten
+
+# OCR a booklet photo (needs the Qwen vision server on :8081)
+lyrics-fetcher ocr path/to/booklet.jpg --engine vlm
+
+# Compile: align known lyrics text against an audio file -> .lrc
+lyrics-fetcher compile song.flac lyrics.txt -o song.lrc \
+    --aligner whisper          # or --aligner qwen3
+
+# Full pipeline for one song (fetch/OCR -> align -> .lrc + .html)
+# --jellyfin writes the output next to the song file (media-player layout)
+lyrics-fetcher full song.flac --image booklet.jpg --jellyfin
+
+# Batch an entire album: auto-map booklet pages -> tracks, align all
+lyrics-fetcher album "/music/Album Name" --jellyfin
+
+# Manually time lyrics by tapping a key per line (for songs that defeat AI)
+lyrics-fetcher manual song.flac lyrics.txt -o song.lrc
+```
+
+### Alignment engine selection
+`--aligner whisper` (default) uses whisper.cpp with anchor-based DP; `album`
+mode additionally merges large-v3-turbo.
+`--aligner qwen3` uses Qwen3-ForcedAligner (Japanese-capable, independent).
+
+### Manual alignment controls
+After the "GO" countdown, press **RETURN** each time a line starts:
+- `b` = go back and re-mark the previous line
+- `s` = skip the current line (set 0.0)
+- `q` = quit and write the `.lrc` so far
+
+---
+
+## Notable design decisions (why things are the way they are)
+
+- **whisper.cpp + Vulkan, not faster-whisper**: whisper.cpp builds a standalone
+  Vulkan binary that runs cleanly on the RDNA4 (RADV GFX1200) GPU with the same
+  Mesa path as the rest of the setup. `medium` was the accuracy sweet spot for
+  synthetic vocals (better than small and large-v3-turbo on most songs).
+- **Booklet OCR via a vision LLM, not Tesseract**: on real phone-photo booklets
+  (uneven lighting, no scanner), the Qwen3.5-9B vision model is far more
+  accurate than Tesseract at reading Japanese kanji + line breaks. Tesseract
+  stays as a CPU fallback.
+- **Known lyrics are authoritative; whisper only supplies timestamps**: even when
+  whisper garbles an obscure song, the correct fetched text is kept and fuzzy-
+  matched to segments for timing.
+- **Monotonic anchor alignment**: lyric lines are only treated as time anchors
+  when whisper's match is confident; lines between anchors are interpolated. If
+  whisper hallucinates (no anchors at all), lines spread evenly across the song
+  duration instead of collapsing.
+- **Some songs defeat automation entirely** (e.g. ASTEROID's 告げよ — dense BGM
+  intro that both whisper and Qwen3-ForcedAligner fail to time). That is why the
+  `manual` subcommand exists: tap line starts by ear, then hand-edit.
+
+---
+
+## Troubleshooting
+
+- **`uv sync` torch resolution conflict** — run with
+  `uv sync --index-strategy unsafe-best-match` so PyPI supplies non-torch deps.
+- **Qwen vision model OOM alongside whisper** — vision model uses ~7.6 GB;
+  whisper `medium` fits (~2.5 GB) on a 16 GB card. If you use a bigger vision
+  model or a big LLM in LM Studio at the same time, stop one before the other.
+- **`huggingface-cli` lock error on NAS** — use `wget -c` for the GGUF files.
+- **Qwen3ForcedAligner OOM** — make sure you're not loading it while the vision
+  server (or another big model) holds VRAM; they don't share a 16 GB card in the
+  same run.
