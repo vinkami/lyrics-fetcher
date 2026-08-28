@@ -15,29 +15,37 @@ import re
 import subprocess
 from pathlib import Path
 
+from ..config import settings
 from ..models import Lyrics
 from .base import BaseAligner, TimedLine
 
-DEFAULT_BIN = Path.home() / "whisper.cpp" / "build" / "bin" / "whisper-cli"
-DEFAULT_MODEL = Path.home() / "whisper.cpp" / "models" / "ggml-medium.bin"
-MODEL_TURBO = Path.home() / "whisper.cpp" / "models" / "ggml-large-v3-turbo.bin"
+DEFAULT_BIN = settings.whisper_bin
+DEFAULT_MODEL = settings.whisper_model
+MODEL_TURBO = settings.whisper_extra_models[0] if settings.whisper_extra_models else (
+    Path.home() / "whisper.cpp" / "models" / "ggml-large-v3-turbo.bin"
+)
 
 
 class WhisperCppAligner(BaseAligner):
     name = "whisper-cpp"
 
-    def __init__(self, binary: Path = DEFAULT_BIN, model: Path = DEFAULT_MODEL,
-                 lang: str = "ja", max_len: int = 40, device: int = 0,
-                 extra_models: tuple[Path, ...] = ()):
-        self.binary = binary
-        self.model = model
-        self.lang = lang
-        self.max_len = max_len
-        self.device = device
+    def __init__(self, binary: Path | None = None, model: Path | None = None,
+                 lang: str | None = None, max_len: int | None = None,
+                 device: int | None = None,
+                 extra_models: tuple[Path, ...] | None = None):
+        # resolve against live config at construction time (so --config works)
+        self.binary = binary or settings.whisper_bin
+        self.model = model or settings.whisper_model
+        self.lang = lang or settings.whisper_lang
+        self.max_len = max_len if max_len is not None else settings.whisper_max_len
+        self.device = device if device is not None else settings.whisper_device
         # additional whisper models to ALSO transcribe with, useful when the
         # primary model hallucinates on a hard song (e.g. 告げよ). Their segments
         # join the same anchor pool so the best match per line wins.
-        self.extra_models = list(extra_models)
+        if extra_models is None:
+            self.extra_models = list(settings.whisper_extra_models)
+        else:
+            self.extra_models = list(extra_models)
 
     # ---- transcription ----
     def _segments(self, audio: Path, model: Path | None = None) -> list[dict]:

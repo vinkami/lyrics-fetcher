@@ -20,31 +20,30 @@ from .fetcher.genius import GeniusFetcher
 from .fetcher.silentblue import SilentBlueFetcher
 from .ocr.vision import VLMOcr
 from .ocr.tesseract import TesseractOcr
-from .aligner.whisper_cpp import DEFAULT_BIN as DEFAULT_WHISPER_BIN
-from .aligner.whisper_cpp import DEFAULT_MODEL as DEFAULT_WHISPER_MODEL
-from .aligner.whisper_cpp import MODEL_TURBO
 from .aligner.whisper_cpp import WhisperCppAligner
 from .output.writers import LrcWriter
 from .cache import LyricsCache
 from .manual_align import _cmd_manual
+from .config import load, settings
 
 
 def _make_aligner(args, default_extra_turbo: bool = False) -> object:
     """Build an aligner by name (--aligner {whisper,qwen3}).
 
-    ``default_extra_turbo``: if True and --extra-model not given, default the
-    whisper aligner to also run large-v3-turbo (helps hallucinating songs).
+    ``default_extra_turbo``: if True and extra models are not explicitly given,
+    include the configured extra models (default large-v3-turbo).
     """
     name = getattr(args, "aligner", "whisper")
     if name == "qwen3":
         from .aligner.qwen3_forced_aligner import Qwen3ForcedAligner
-        return Qwen3ForcedAligner()
+        qm = getattr(args, "qwen3_model", None)
+        return Qwen3ForcedAligner(model_dir=Path(qm) if qm else None)
 
-    binary = Path(args.binary) if getattr(args, "binary", None) else DEFAULT_WHISPER_BIN
-    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else DEFAULT_WHISPER_MODEL
-    extra = tuple(Path(x) for x in (getattr(args, "extra_model", None) or ())) if getattr(args, "extra_model", None) else ()
-    if default_extra_turbo and not extra:
-        extra = (MODEL_TURBO,)
+    binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
+    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
+    extra = tuple(Path(x) for x in (getattr(args, "extra_model", None) or ())) if getattr(args, "extra_model", None) else None
+    if default_extra_turbo and (getattr(args, "extra_model", None) is None):
+        return WhisperCppAligner(binary=binary, model=model, extra_models=None)
     return WhisperCppAligner(binary=binary, model=model, extra_models=extra)
 
 SOURCE_FACTORY = {
@@ -194,6 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--source", choices=list(SOURCE_FACTORY), default=None,
                     help="Use only this source")
     pf.add_argument("-v", "--verbose", action="store_true", help="Print full lyrics")
+    pf.add_argument("--config", default=None, help="path to a config TOML file")
     pf.set_defaults(func=_cmd_fetch)
 
     po = sub.add_parser("ocr", help="OCR a booklet image to text")
@@ -202,6 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument("--api", default="http://127.0.0.1:8081/v1/chat/completions")
     po.add_argument("--model", default="qwen3.5-9b")
     po.add_argument("--language", default="jpn+eng")
+    po.add_argument("--config", default=None, help="path to a config TOML file")
     po.set_defaults(func=_cmd_ocr)
 
     pc = sub.add_parser("compile", help="Align lyrics text against an audio file")
@@ -216,6 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--model-whisper", default=None, help="path to ggml model")
     pc.add_argument("--aligner", choices=["whisper", "qwen3"], default="whisper",
                     help="alignment engine: whisper (cpp) or qwen3 (ForcedAligner)")
+    pc.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
+    pc.add_argument("--config", default=None, help="path to a config TOML file")
     pc.set_defaults(func=_cmd_compile)
 
     pfull = sub.add_parser("full", help="End-to-end: metadata+fetch/OCR+align+write")
@@ -231,6 +234,8 @@ def build_parser() -> argparse.ArgumentParser:
                             "merging; repeatable. Helps hallucinating songs.")
     pfull.add_argument("--aligner", choices=["whisper", "qwen3"], default="whisper",
                        help="alignment engine: whisper (cpp) or qwen3 (ForcedAligner)")
+    pfull.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
+    pfull.add_argument("--config", default=None, help="path to a config TOML file")
     pfull.add_argument("--no-html", action="store_true", help="skip HTML companion")
     pfull.add_argument("--jellyfin", action="store_true",
                        help="write .lrc next to the audio file (Jellyfin layout)")
@@ -253,6 +258,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="extra whisper model(s); default large-v3-turbo")
     pal.add_argument("--aligner", choices=["whisper", "qwen3"], default="whisper",
                      help="alignment engine: whisper (cpp) or qwen3 (ForcedAligner)")
+    pal.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
+    pal.add_argument("--config", default=None, help="path to a config TOML file")
     pal.add_argument("--no-html", action="store_true")
     pal.add_argument("--jellyfin", action="store_true",
                      help="write .lrc next to each audio file (Jellyfin layout)")
@@ -271,13 +278,20 @@ def build_parser() -> argparse.ArgumentParser:
     pman.add_argument("--title", default="")
     pman.add_argument("--artist", default="")
     pman.add_argument("--album", default="")
+    pman.add_argument("--config", default=None, help="path to a config TOML file")
     pman.set_defaults(func=_cmd_manual)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
+    # load config (auto-detect) before any command runs so settings are available
+    load()
     parser = build_parser()
     args = parser.parse_args(argv)
+    # if --config was given, (re)load explicitly from it
+    cfg = getattr(args, "config", None)
+    if cfg:
+        load(Path(cfg))
     if args.command == "compile" and not Path(args.audio).exists():
         print(f"Audio file not found: {args.audio}", file=sys.stderr)
         return 2

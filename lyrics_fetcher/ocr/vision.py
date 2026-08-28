@@ -14,12 +14,13 @@ from pathlib import Path
 import requests
 from PIL import Image
 
+from ..config import settings
 from ..models import Lyrics
 from .base import BaseOCR
 
-# default Qwen vision server (override via constructor)
-DEFAULT_API = "http://127.0.0.1:8081/v1/chat/completions"
-DEFAULT_MODEL = "qwen3.5-9b"
+# default Qwen vision server (override via constructor or config)
+DEFAULT_API = settings.vision_api
+DEFAULT_MODEL = settings.vision_model
 
 VLM_PROMPT = (
     "This is a photo of an album lyrics booklet page (Japanese). "
@@ -49,10 +50,10 @@ MAX_SIDE = 1568
 class VLMOcr(BaseOCR):
     name = "ocr-vlm"
 
-    def __init__(self, api: str = DEFAULT_API, model: str = DEFAULT_MODEL,
+    def __init__(self, api: str | None = None, model: str | None = None,
                  timeout: int = 600, cache=None, clean: bool = True):
-        self.api = api
-        self.model = model
+        self.api = api or settings.vision_api
+        self.model = model or settings.vision_model
         self.timeout = timeout
         self.cache = cache
         self.clean = clean

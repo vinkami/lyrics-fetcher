@@ -20,20 +20,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..config import settings
 from ..models import Lyrics
 from .base import BaseAligner, TimedLine
 
-LOCAL_MODEL = Path("/mnt/fnos/storage/ai-models/qwen3-forcedaligner/model")
+LOCAL_MODEL = settings.qwen3_aligner_model
 
 
 class Qwen3ForcedAligner(BaseAligner):
     name = "qwen3-forcedaligner"
 
-    def __init__(self, model_dir: Path = LOCAL_MODEL,
-                 device: str | None = None, language: str = "Japanese"):
-        self.model_dir = str(model_dir)
+    def __init__(self, model_dir: Path | None = None,
+                 device: str | None = None, language: str | None = None):
+        # resolve against live config at construction time (so --config works)
+        self.model_dir = str(model_dir or settings.qwen3_aligner_model)
         self.device = device
-        self.language = language
+        self.language = language or settings.qwen3_aligner_language
         self._model = None
         self._processor = None
 

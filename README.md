@@ -78,6 +78,32 @@ uv sync
 `uv sync` reads `pyproject.toml`. Note two special dependency sources that
 `uv sync` handles:
 
+### 1b. Configuration file (optional)
+
+Settings are resolved by precedence: **CLI arguments > config file > defaults**.
+You can skip this — built-in defaults work out of the box — but a config file
+lets you point the tool at your models/library without repeating flags.
+
+Copy the template and edit:
+```bash
+cp config.example.toml ~/.config/lyrics-fetcher/config.toml   # or ./config.toml
+```
+
+Key sections:
+- `[paths]` — `music_dir`, `cache_db`, `out_dir`
+- `[whisper]` — `whisper_bin`, `whisper_model`, `whisper_extra_models`,
+  `whisper_lang`, `whisper_max_len`, `whisper_device`
+- `[vision]` — `vision_api`, `vision_model` (the local llama-server for OCR)
+- `[qwen3_aligner]` — `qwen3_aligner_model`, `qwen3_aligner_language`
+- `[output]` — `lrc_by`, `jellyfin_default`, `write_html_default`
+- `[tuning]` — `anchor_min_score`, `request_timeout`
+
+It's auto-detected from `$LF_CONFIG`, `$XDG_CONFIG_HOME/lyrics-fetcher/`, or
+`./config.toml`. To use an explicit file:
+```bash
+lyrics-fetcher full song.flac --config /path/to/config.toml
+```
+
 - **torch / torchaudio** come from the **PyTorch ROCm wheel index**, not PyPI:
   ```ini
   [[tool.uv.index]]
