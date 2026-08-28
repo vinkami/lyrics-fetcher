@@ -129,6 +129,7 @@ def _cmd_full(args: argparse.Namespace) -> int:
         aligner=_make_aligner(args),
         ocr=ocr_engine,
         fetcher=FetchOrchestrator(cache=cache),
+        use_whisper_fallback=args.whisper_fallback,
     )
     result = pipe.run(audio=audio, out_dir=Path(args.out_dir), image=image,
                       write_html=not args.no_html,
@@ -153,16 +154,17 @@ def _cmd_album(args: argparse.Namespace) -> int:
     booklet_dir = Path(args.booklet) if args.booklet else None
 
     cache = _make_cache(not args.no_cache)
-    # OCR engine always available for batch (matching needs to read page headers)
+    # OCR engine always available for batch (multi-song page splitting needs it;
+    # tracks with no booklet page simply get no OCR lyrics)
     ocr_engine = VLMOcr(api=args.api, model=args.model, cache=cache)
     pipe = Pipeline(
         aligner=_make_aligner(args, default_extra_turbo=True),
         ocr=ocr_engine,
         fetcher=FetchOrchestrator(cache=cache),
-        use_whisper_fallback=not args.no_whisper_fallback,
+        use_whisper_fallback=args.whisper_fallback,
     )
 
-    processed, unmatched = batch_album(
+    processed, unmatched, skipped = batch_album(
         album_dir=album_dir,
         out_dir=Path(args.out_dir) if not args.jellyfin else None,
         booklet_dir=booklet_dir,
@@ -171,15 +173,20 @@ def _cmd_album(args: argparse.Namespace) -> int:
         prefer_ocr=not args.web_first,
         write_html=not args.no_html,
         verbose=not args.quiet,
+        best_effort=args.whisper_fallback,
     )
 
     print(f"\nProcessed {len(processed)} songs -> LRC:")
     for p in processed:
         print(f"  {p}")
+    if skipped:
+        print(f"\n{len(skipped)} skipped (no lyrics):")
+        for s in skipped:
+            print(f"  {s.name}")
     if unmatched:
-        print(f"\n{len(unmatched)} booklet pages unmatched:")
+        print(f"\n{len(unmatched)} booklet blocks unmatched:")
         for page, reason in unmatched:
-            print(f"  {page.name}: {reason}")
+            print(f"  {page}: {reason}")
     return 0
 
 
@@ -300,6 +307,9 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("--web-first", action="store_true",
                        help="when --image given, try web fetchers before OCR "
                             "(default: OCR first, it's authoritative for the album)")
+    pfull.add_argument("--whisper-fallback", action="store_true",
+                       help="best-effort: whisper-transcribe if no lyrics found "
+                            "(default: report no lyrics; whisper is poor at Japanese)")
     pfull.set_defaults(func=_cmd_full)
 
     pal = sub.add_parser("album", help="Batch-process every track in an album folder")
@@ -321,8 +331,9 @@ def build_parser() -> argparse.ArgumentParser:
     pal.add_argument("--jellyfin", action="store_true",
                      help="write .lrc next to each audio file (Jellyfin layout)")
     pal.add_argument("--no-cache", action="store_true", help="disable SQLite cache")
-    pal.add_argument("--no-whisper-fallback", action="store_true",
-                     help="don't transcribe audio via whisper when no lyrics found")
+    pal.add_argument("--whisper-fallback", action="store_true",
+                     help="best-effort: whisper-transcribe tracks with no lyrics "
+                          "(default: skip them; whisper is poor at Japanese singing)")
     pal.add_argument("--web-first", action="store_true",
                      help="try web fetchers before OCR for each track")
     pal.add_argument("-q", "--quiet", action="store_true")

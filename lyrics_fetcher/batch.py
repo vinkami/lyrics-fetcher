@@ -16,16 +16,25 @@ Unmatched pages are left unprocessed and reported.
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from .models import LyricLine, Lyrics, SongMeta
 from .pipeline import Pipeline
-from .utils import MUSIC_DIR, slugify
+from .utils import MUSIC_DIR
 
 
 class BookletMapper:
-    """Assocaite booklet pages to audio tracks by OCR'd title headers."""
+    """Associate booklet pages to audio tracks via multi-song VLM extraction.
+
+    A booklet page usually contains MORE THAN ONE song (e.g. PRiSM photo A holds
+    プリズム + the first half of RondeauX). Instead of treating one page as one
+    song (which leaks adjacent songs' lyrics into each other), we ask the VLM to
+    split each page ``{song_title: lyrics}``, then:
+      - normalize each block's title to a canonical on-disc track,
+      - reassemble a song that spans multiple pages by concatenating its blocks
+        in page order,
+      - drop "phantom" blocks (titles matching no track) and report them.
+    """
 
     #: audio extensions we recognize
     AUDIO_EXTS = {".flac", ".mp3", ".m4a", ".ogg", ".wav"}
@@ -33,13 +42,6 @@ class BookletMapper:
     def __init__(self, audio_dir: Path, ocr):
         self.audio_dir = audio_dir
         self.ocr = ocr
-        self._ocr_cache: dict[Path, str] = {}
-
-    def ocr_page(self, img: Path) -> str:
-        """OCR a page, caching the result so mapping+fetch don't OCR twice."""
-        if img not in self._ocr_cache:
-            self._ocr_cache[img] = self.ocr.ocr(img)
-        return self._ocr_cache[img]
 
     # ---- discovery ----
     def discover_audio(self) -> list[Path]:
@@ -58,65 +60,56 @@ class BookletMapper:
         exts = {".jpg", ".jpeg", ".png", ".webp"}
         return sorted(p for p in base.rglob("*") if p.suffix.lower() in exts)
 
-    # ---- header -> track mapping ----
-    @staticmethod
-    def _extract_title(text: str) -> str | None:
-        """Pull a song title from OCR'd page text.
+    # ---- multi-song aggregation ----
+    def collect_album_songs(self, images: list[Path],
+                            tracks: list[Path]
+                            ) -> tuple[dict[Path, Lyrics], list[tuple[str, str]]]:
+        """Aggregate per-song lyrics across all booklet pages.
 
-        Accepts a bracketed header "[命を振り回せ]" or the first non-empty line.
+        Returns ``(per_track_lyrics, phantoms)`` where:
+          - ``per_track_lyrics[track_path]`` = Lyrics for that track (concatenated
+            across every page that contained it, in page order), or absent if the
+            track has no lyrics on any page;
+          - ``phantoms`` = [(page_name, song_label), ...] for blocks that matched
+            no on-disc track (e.g. a song-section header the VLM split out, like
+            "Sanctus" / "レクイエム" inside RondeauX).
         """
-        lines = [l.strip() for l in (x.strip() for x in text.splitlines()) if l]
-        if not lines:
-            return None
-        first = lines[0]
-        m = re.match(r"^\[([^\]]+)\]$", first)
-        if m:
-            return m.group(1).strip()
-        # fall back to first line if it's short and looks like a title (no spaces/kanji slug)
-        if len(first) <= 30 and not re.search(r"[、。！？\s。]", first):
-            return first
-        return None
-
-    def map_pages_to_tracks(self, images: list[Path],
-                            tracks: list[Path],
-                            prefer_ocr_for_unmatched: bool = False) -> dict[Path, Path | None]:
-        """Return {page: track_path} using OCR'd title headers.
-
-        A page with no match maps to None (reported separately).
-        """
-        # build track lookup: slugified title -> path
-        title_index: dict[str, list[Path]] = {}
+        # index canonical track title -> path
+        by_title: dict[str, Path] = {}
         for t in tracks:
-            meta = SongMeta.from_path(t)
-            if meta.title:
-                title_index.setdefault(slugify(meta.title), []).append(t)
+            title = (SongMeta.from_path(t).title or t.stem).strip()
+            if title and title not in by_title:
+                by_title[title] = t
 
-        mapping: dict[Path, Path | None] = {}
+        known = list(by_title)  # hints for the VLM + normalization targets
+
+        # gather each page's blocks
+        per_track_blocks: dict[Path, list[str]] = {t: [] for t in tracks}
+        phantoms: list[tuple[str, str]] = []
         for img in images:
-            try:
-                text = self.ocr.ocr(img)
-            except Exception:
-                mapping[img] = None
-                continue
-            title = self._extract_title(text)
-            match = None
-            if title:
-                matches = title_index.get(slugify(title))
-                if matches:
-                    match = matches[0]
-            mapping[img] = match
+            blocks = self.ocr.extract_songs(img, known_titles=known)
+            for label, text in blocks.items():
+                track = by_title.get(label)
+                if track is not None:
+                    per_track_blocks[track].append(text)
+                else:
+                    phantoms.append((img.name, label))
 
-        # positional fallback: booklet pages canonically map one-per-track, in
-        # order. Any page with no title match is paired with the next unmatched
-        # track in filename order. This handles pages whose OCR dropped the
-        # title header (VLM output is nondeterministic), and pages whose title
-        # differs from the metadata title while order still holds.
-        matched_tracks = {t for t in mapping.values() if t is not None}
-        unmatched_pages = [i for i, t in mapping.items() if t is None]
-        unmatched_tracks = [t for t in tracks if t not in matched_tracks]
-        for page, track in zip(unmatched_pages, unmatched_tracks):
-            mapping[page] = track
-        return mapping
+        # build Lyrics per track
+        per_track: dict[Path, Lyrics] = {}
+        for track, blocks in per_track_blocks.items():
+            if not blocks:
+                continue
+            meta = SongMeta.from_path(track)
+            lines = [
+                LyricLine(l)
+                for block in blocks for l in block.splitlines() if l.strip()
+            ]
+            per_track[track] = Lyrics(
+                source=self.ocr.name, title=meta.title or "",
+                artist=meta.artist or "", lines=lines,
+            )
+        return per_track, phantoms
 
 
 def batch_album(
@@ -128,12 +121,17 @@ def batch_album(
     prefer_ocr: bool = True,
     write_html: bool = True,
     verbose: bool = False,
-) -> tuple[list[Path], list[tuple[Path, str]]]:
+    best_effort: bool = False,
+) -> tuple[list[Path], list[tuple[Path, str]], list[Path]]:
     """Process every track in an album.
 
-    Returns (processed_lrc_paths, [(page, reason) unmatched]).
+    Returns (processed_lrc_paths, [(page, reason) unmatched], skipped_tracks).
+    Tracks with no lyrics are SKIPPED by default (no .lrc written); with
+    ``best_effort=True`` whisper transcribes them as a fallback.
     """
     pipe = pipeline or Pipeline()
+    if best_effort:
+        pipe.use_whisper_fallback = True
     mapper = BookletMapper(album_dir, pipe.ocr)
 
     tracks = mapper.discover_audio()
@@ -142,49 +140,39 @@ def batch_album(
     if verbose:
         print(f"tracks: {len(tracks)}  booklet pages: {len(images)}")
 
+    # multi-song OCR: aggregate per-track lyrics across pages
+    per_track, phantoms = mapper.collect_album_songs(images, tracks)
+
     processed: list[Path] = []
-    unmatched: list[tuple[Path, str]] = [(i, "") for i in images]  # placeholder
-
-    # map pages -> tracks
-    page_to_track = mapper.map_pages_to_tracks(images, tracks)
-
-    # process each audio, using its matched page if any
+    skipped: list[Path] = []
     for audio in tracks:
         meta = SongMeta.from_path(audio)
-        # find a page mapped to this audio
-        page = next((p for p, t in page_to_track.items() if t == audio), None)
+        pre = per_track.get(audio)
         try:
-            # If a page is mapped to this track, reuse its cached OCR text as
-            # pre-acquired lyrics (authoritative for the album, avoids re-OCR).
-            pre_lyrics = None
-            if page is not None:
-                text = mapper.ocr_page(page)
-                lines = [LyricLine(l) for l in (x.strip() for x in text.splitlines()) if l]
-                if lines:
-                    # skip a leading [title] header line as a lyric
-                    if len(lines) > 1 and lines[0].text.startswith("["):
-                        lines = lines[1:]
-                    pre_lyrics = Lyrics(
-                        source="ocr-vlm", title=meta.title or "",
-                        artist=meta.artist or "", lines=lines,
-                    )
             result = pipe.run(
                 audio=audio,
                 out_dir=out_dir,
-                image=None if pre_lyrics else page,
+                image=None,
                 write_html=write_html,
-                prefer_ocr=True,
+                prefer_ocr=prefer_ocr,
                 jellyfin=jellyfin,
-                lyrics=pre_lyrics,
+                lyrics=pre,
             )
             processed.append(result.lrc_path)
             if verbose:
                 print(f"  OK  {audio.name}: {result.lyrics_source} ({result.lines} lines)")
+        except RuntimeError as e:
+            if "No lyrics found" in str(e):
+                skipped.append(audio)
+                if verbose:
+                    print(f"  SKIP {audio.name}: no lyrics")
+            else:
+                if verbose:
+                    print(f"  ERR {audio.name}: {e}")
         except Exception as e:
             if verbose:
                 print(f"  ERR {audio.name}: {e}")
 
-    # unmatched pages
-    unmatched = [(i, "no matching track") for i, t in page_to_track.items()
-                 if t is None]
-    return processed, unmatched
+    # unmatched booklet content: phantom song blocks (no matching track)
+    unmatched = [(img, f"unmatched song block: {label}") for img, label in phantoms]
+    return processed, unmatched, skipped
