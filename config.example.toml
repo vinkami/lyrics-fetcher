@@ -1,0 +1,46 @@
+# lyrics-fetcher configuration
+# Copy this to ~/.config/lyrics-fetcher/config.toml (or ./config.toml) and edit.
+#
+# Precedence: CLI arguments > this file > built-in defaults.
+# All paths are optional — omit any key to use the default.
+
+[paths]
+# Where your music library lives (music_dir is used as the base for relative
+# audio paths in batch mode, though most commands take explicit file paths).
+music_dir = "/mnt/fnos/storage/Music"
+# SQLite cache location (lyrics + OCR)
+cache_db = "/home/vinkami/.cache/lyrics-fetcher/cache.db"
+# default output directory (used by `full`/`album` without --jellyfin)
+out_dir = "out"
+
+[whisper]
+# whisper.cpp binary + model (primary aligner)
+whisper_bin = "/home/vinkami/whisper.cpp/build/bin/whisper-cli"
+whisper_model = "/home/vinkami/whisper.cpp/models/ggml-medium.bin"
+# extra model(s) merged as anchors (comma-separated or list); empty = none
+whisper_extra_models = "/home/vinkami/whisper.cpp/models/ggml-large-v3-turbo.bin"
+whisper_lang = "ja"
+whisper_max_len = 40
+whisper_device = 0
+
+[vision]
+# local vision LLM (llama-server) for booklet OCR
+vision_api = "http://127.0.0.1:8081/v1/chat/completions"
+vision_model = "qwen3.5-9b"
+
+[qwen3_aligner]
+# Qwen3-ForcedAligner model dir (the --aligner qwen3 option)
+qwen3_aligner_model = "/mnt/fnos/storage/ai-models/qwen3-forcedaligner/model"
+qwen3_aligner_language = "Japanese"
+
+[output]
+lrc_by = "lyrics-fetcher"
+# default to Jellyfin layout (write .lrc next to audio) when not given on CLI
+jellyfin_default = false
+write_html_default = true
+
+[tuning]
+# minimum fuzzy-match score for a whisper segment to be treated as a time anchor
+anchor_min_score = 58.0
+# HTTP timeout for web fetchers/vision, seconds
+request_timeout = 20
