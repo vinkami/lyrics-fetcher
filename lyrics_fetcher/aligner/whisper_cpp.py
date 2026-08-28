@@ -70,12 +70,12 @@ class WhisperCppAligner(BaseAligner):
         Uses dynamic programming over a similarity matrix with a NON-DECREASING
         constraint: line i maps to a segment index >= line i-1's. This maximizes
         cumulative fuzzy-match similarity while preserving lyric order and keeping
-        repeated-chorus lines in correct temporal arrangement.
+        repeated-chorus lines in correct temporal arrangement. Returns the
+        similarity matrix too so the caller can gauge confidence.
         """
         from thefuzz import fuzz
 
         n_lines, n_segs = len(known), len(segs)
-        # similarity[i][j] = fuzz ratio of known[i] vs clean(seg[j].text)
         sim = [[0.0] * n_segs for _ in range(n_lines)]
         clean = WhisperCppAligner._clean
         for i, line in enumerate(known):
@@ -106,7 +106,29 @@ class WhisperCppAligner(BaseAligner):
             assign[i] = j
             j = back[i][j]
         assign[0] = j
-        return assign
+        return assign, sim
+
+    @staticmethod
+    def _anchor_align(known: list[str], segs: list[dict],
+                      min_score: float = 58.0) -> list[int]:
+        """Anchor-based alignment.
+
+        Same monotonic DP as ``_align``, but only lines whose best similarity
+        exceeds ``min_score`` are treated as reliable TIME ANCHORS. This fixes
+        the failure mode where whisper hallucinates (e.g. 告げよ looped garbage):
+        there, no line scores high, so we produce no anchors and fall back to
+        an even spread in ``align``.
+
+        Returns a list of ``line_idx -> time_anchor``; entries with None are
+        unanchored and will be interpolated by the caller.
+        """
+        assign, sim = WhisperCppAligner._align(known, segs)
+        anchors: list[int | None] = [None] * len(known)
+        for i, si in enumerate(assign):
+            score = sim[i][si]
+            if score >= min_score:
+                anchors[i] = si
+        return anchors
 
     # ---- public API ----
     def align(self, audio: Path, lyrics: Lyrics) -> list[TimedLine]:
@@ -115,37 +137,60 @@ class WhisperCppAligner(BaseAligner):
         if not known or not segs:
             return [TimedLine(text=l.text, start=0.0) for l in lyrics.lines]
 
-        # monotonic DP: line -> segment index (keeps ordering, no chorus collapse)
-        assign = self._align(known, segs)
+        anchors = self._anchor_align(known, segs)
+        n_lines = len(known)
+        # song duration = last segment end
+        duration = segs[-1]["to"] / 1000.0
 
-        # Interpolate: when several lines map to the same segment, spread them
-        # across that segment's [from, to] span instead of snapping all to its
-        # start (which produced overlapping/identical timestamps). Lines that map
-        # to distinct adjacent segments keep each segment's start, but we ensure
-        # they never go backwards.
-        timed = []
-        # group consecutive lines by the segment they map to
-        groups = []  # (seg_idx, [line_idx])
-        for i, s in enumerate(assign):
-            if groups and groups[-1][0] == s:
-                groups[-1][1].append(i)
-            else:
-                groups.append((s, [i]))
+        # Build the time for each line:
+        #   - anchored lines get their segment's start time.
+        #   - unanchored lines are interpolated between the nearest anchored
+        #     neighbors (or the song edges) proportionally by line index.
+        times: list[float] = [0.0] * n_lines
+        # gather anchor times by line index
+        anchor_times = {i: segs[si]["from"] / 1000.0 for i, si in enumerate(anchors) if si is not None}
 
-        for seg_idx, line_idxs in groups:
-            seg = segs[seg_idx]
-            t0, t1 = seg["from"] / 1000.0, seg["to"] / 1000.0
-            n = len(line_idxs)
-            for k, li in enumerate(line_idxs):
-                # evenly distribute across the segment duration; single line => start
-                start = t0 + (t1 - t0) * k / max(n, 1)
-                end = t0 + (t1 - t0) * (k + 1) / max(n, 1)
-                timed.append(TimedLine(text=known[li], start=start, end=end))
+        # fill ranges between consecutive anchor lines
+        keys = sorted(anchor_times)
+        # before the first anchor
+        if keys:
+            first, fv = keys[0], anchor_times[keys[0]]
+            if first > 0:
+                # spread lines [0, first) leading up to first anchor, starting near 0
+                for i in range(first):
+                    times[i] = fv * (i + 1) / (first + 1)
+            for i in range(first, keys[-1] + 1):
+                if i in anchor_times:
+                    times[i] = anchor_times[i]
+                else:
+                    # find prev/next anchor
+                    prev = None
+                    for k in keys:
+                        if k < i:
+                            prev = k
+                        else:
+                            break
+                    nxt = next((k for k in keys if k > i), None)
+                    if prev is not None and nxt is not None:
+                        pv, nv = anchor_times[prev], anchor_times[nxt]
+                        times[i] = pv + (nv - pv) * (i - prev) / (nxt - prev)
+                    elif prev is not None:
+                        times[i] = anchor_times[prev]  # clamp
+            # after the last anchor
+            last, lv = keys[-1], anchor_times[keys[-1]]
+            if last < n_lines - 1:
+                remaining = (duration - lv) / (n_lines - last)
+                for i in range(last + 1, n_lines):
+                    times[i] = lv + remaining * (i - last)
+        else:
+            # no anchors at all (whisper hallucinated): even spread across song
+            for i in range(n_lines):
+                times[i] = duration * i / max(n_lines - 1, 1)
 
-        # hard safety: enforce monotonic non-decreasing starts
-        timed.sort(key=lambda tl: tl.start)
+        # build timed lines (single-word lines get ~1s end for display)
+        timed = [TimedLine(text=known[i], start=times[i]) for i in range(n_lines)]
+        # hard safety: monotonic non-decreasing
         for i in range(1, len(timed)):
             if timed[i].start < timed[i - 1].start:
-                timed[i] = TimedLine(text=timed[i].text, start=timed[i - 1].start,
-                                     end=max(timed[i].end, timed[i - 1].end))
+                timed[i] = TimedLine(text=timed[i].text, start=timed[i - 1].start)
         return timed

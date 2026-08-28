@@ -45,7 +45,7 @@ class FasterWhisperAligner(BaseAligner):
         known = [l.text for l in lyrics.lines]
         if not known or not segs:
             return [TimedLine(text=l.text, start=0.0) for l in lyrics.lines]
-        assign = WhisperCppAligner._align(known, segs)
+        assign, _ = WhisperCppAligner._align(known, segs)
         return [
             TimedLine(text=lyrics.lines[i].text, start=segs[assign[i]]["from"] / 1000.0,
                       end=segs[assign[i]]["to"] / 1000.0)
