@@ -105,6 +105,17 @@ class BookletMapper:
                 if matches:
                     match = matches[0]
             mapping[img] = match
+
+        # positional fallback: booklet pages canonically map one-per-track, in
+        # order. Any page with no title match is paired with the next unmatched
+        # track in filename order. This handles pages whose OCR dropped the
+        # title header (VLM output is nondeterministic), and pages whose title
+        # differs from the metadata title while order still holds.
+        matched_tracks = {t for t in mapping.values() if t is not None}
+        unmatched_pages = [i for i, t in mapping.items() if t is None]
+        unmatched_tracks = [t for t in tracks if t not in matched_tracks]
+        for page, track in zip(unmatched_pages, unmatched_tracks):
+            mapping[page] = track
         return mapping
 
 
