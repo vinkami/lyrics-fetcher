@@ -26,6 +26,7 @@ from .aligner.whisper_cpp import MODEL_TURBO
 from .aligner.whisper_cpp import WhisperCppAligner
 from .output.writers import LrcWriter
 from .cache import LyricsCache
+from .manual_align import _cmd_manual
 
 
 def _make_aligner(args, default_extra_turbo: bool = False) -> object:
@@ -262,6 +263,15 @@ def build_parser() -> argparse.ArgumentParser:
                      help="try web fetchers before OCR for each track")
     pal.add_argument("-q", "--quiet", action="store_true")
     pal.set_defaults(func=_cmd_album)
+
+    pman = sub.add_parser("manual", help="Manually time lyrics by tapping a key per line")
+    pman.add_argument("audio")
+    pman.add_argument("lyrics", help="path to lyrics .txt")
+    pman.add_argument("-o", "--output", default=None)
+    pman.add_argument("--title", default="")
+    pman.add_argument("--artist", default="")
+    pman.add_argument("--album", default="")
+    pman.set_defaults(func=_cmd_manual)
     return p
 
 
