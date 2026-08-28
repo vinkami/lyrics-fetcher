@@ -1,7 +1,8 @@
 # PROJECT HANDOFF — lyrics-fetcher
 
 > **Purpose of this file:** Comprehensive context so a future Hermes session can
-> resume work without re-deriving everything. Written 2026-08-28 after PR #3.
+> resume work without re-deriving everything. Written 2026-08-28 after PR #3;
+> updated 2026-08-29 after the maimai album3 batch + PRs #4/#5/#6.
 > This is a *working handoff*, not user-facing docs (see `README.md` for that).
 
 ---
@@ -26,10 +27,13 @@ structured replies, no fluff. Prefers bullet points, facts, honest
 
 ## 2. Current state (main branch, synced with origin)
 
-`main` has 3 merged PRs (all squash-merged, CI green):
+`main` merged PRs (all squash-merged, CI green, feature branch deleted):
 
 | Commit | PR | What |
 |--------|-----|------|
+| `c0b9f7c` | #6 | **Reject title-only OCR blocks** — index/worldview pages of the booklet aren't lyrics |
+| `33b6101` | #5 | **Multi-song booklet OCR** + skip no-lyrics by default |
+| `ca8554b` | #4 | **`cross-check` mode** — compare whisper vs Qwen3 timings `--tolerance` |
 | `d8c1d82` | #3 | Central **TOML config file** (`config.py`, `config.example.toml`) |
 | `e27986d` | #2 | CI workflow (`.github/workflows/ci.yml`) + lockfile + tests |
 | `dfd2352` | #1 | The full working project (fetch/align/output + README) |
@@ -41,7 +45,7 @@ in PR #1.**
 **Branching strategy now active:**
 - `main` = stable trunk, only receives squash-merged PRs
 - Short-lived `feat/...` / `fix/...` / `docs/...` branches off main
-- Every PR gated on CI (which runs `uv sync` + `pytest`, 33 tests)
+- Every PR gated on CI (which runs `uv sync` + `pytest`)
 - On merge, delete the branch locally too (`git branch -D`) + `git remote prune origin`
 
 ---
@@ -143,6 +147,16 @@ blocks `setpci`); not worth re-debugging unless the user asks.
 8. **Git/branching** — originally everything piled onto `feature/poc-scripts` and
    **wasn't pushed**. Established: main trunk + short-lived PR branches, squash-merge,
    `uv.lock` committed, CI gating. **Always `git push` features!**
+9. **Multi-song booklet OCR (PR #5)** — pages often hold 2–3 songs plus worldview
+   pages. `ocr/extract_songs(image, known_titles)` returns a dict of
+   `title -> text`, split via the VLM; the album batch then matches each block to
+   on-disc tracks. **No-lyrics songs (instrumentals/BGM) are skipped by default**;
+   a best-effort option exists for e.g. ATLAS RUSH (sampled human "lyrics").
+10. **Title-only blocks are NOT lyrics (PR #6)** — index/title pages and worldview/
+    header pages come back from the VLM as single-line blocks whose content is just
+    the printed title (e.g. an index page listing QUIQ/Edelweiss/Bloody Trail).
+    `BookletMapper._is_title_only_block()` drops blocks (≤2 lines) whose cleaned
+    text matches their own title/header → reported as unmatched, not invented lyrics.
 
 ---
 
@@ -166,16 +180,15 @@ blocks `setpci`); not worth re-debugging unless the user asks.
 
 ---
 
-## 8. Next steps (agreed priority, NOT yet started)
+## 8. Next steps (agreed priority)
 
-The user explicitly wanted these two, in this order:
-
-- **A — `cross-check` mode:** run **both** whisper and Qwen3-ForcedAligner on a
-  song; report lines where their timestamps diverge, so the user can spot
-  drifting lines (their original 黒い目 drift goal) and hand-fix only those.
-- **B — process the maimai prism / manosaba albums:** run the real `album` batch
-  on the photographed albums (they're the hard cases: artificial-language songs
-  like Cryptarithm, まのさば's JP translations). Surfaces real bugs/quality issues.
+- **A — `cross-check` mode:** ✅ **DONE (PR #4)**. Run **both** whisper and
+  Qwen3-ForcedAligner on a song; report lines where their timestamps diverge, so
+  the user can spot drifting lines (their original 黒い目 drift goal) and
+  hand-fix only those. Command: `cross-check song.flac lyrics.txt --tolerance 2.5`.
+- **B — process the maimai prism / manosaba albums:** ✅ **STARTED — maimai
+  ベストアルバムちほー3 run in progress (first full run done; see §10).** The
+  manosaba (魔法少女ノ魔女裁判) album is still pending.
 
 Other ideas we brainstormed (lower priority): furigana for non-utaten sources
 (janome/kytea), coverage reporting (flag AI-guessed vs curated lyrics), "smart
@@ -183,13 +196,53 @@ Other ideas we brainstormed (lower priority): furigana for non-utaten sources
 
 ---
 
-## 9. Commands cheat-sheet
+## 9. Session log — 2026-08-29 maimai ベストアルバムちほー3
+
+Ran the real `album` batch on the photographed 30-page / 101-track booklet
+(maimai ベストアルバムちほー3 on the NAS). The album has real **instrumentals/
+BGM (skipped by design)**, **worldview pages sitting mid-booklet (need to not
+leak)**, 1–3-song pages, and artificial-language songs (Cryptarithm, IF:U).
+
+**Run 1 output (before fixes):** many vocal songs wrongly produced a single-line
+`.lrc` whose only content was the printed **title header** (`[00:00.00]QUIQ`
+etc.) for songs that have no lyrics. Root cause: index/title pages (e.g.
+`002013` listing QUIQ/Edelweiss/Bloody Trail) and header pages (e.g. `001816`
+`BUDDiES PLUS` block) came back from the VLM as single-line blocks the agg step
+treated as real lyrics. → **PR #6 fix (`_is_title_only_block`).**
+
+**Run 2 (after #6):** the 9 garbage single-line `.lrc` are gone; those songs
+now **skip** correctly; index + worldview pages report as unmatched phantoms
+(`CHIBI` pages, `53-6`/`518-4` page "phrases", くま pages; `002013` title-only).
+**Final on-disk state: 49 `.lrc`, all with real lyrics, zero garbage.**
+
+**Key finding — run-to-run instability (NOT the OCR logic):** the set of songs
+that get lyrics wanders between runs because coverage leans on the **web
+fetchers**, and **silentblue is intermittently Cloudflare-blocked** (already in
+§6/§3 caveat). ~8 tracks flip to "skipped" when silentblue is down at that
+moment (エスオーエス, のじゃロリック, RE-INCARNATED, RondeauX, Cryptarithm, 有明,
+Ref-rain, Flashback — their good content came from web fetch in a prior run).
+The VLM page-split is also nondeterministic, so OCR-attached tracks vary too.
+**No data loss** (an existing `.lrc` is never clobbered by a failed fetch), but
+"re-run and hope." Not yet fixed.
+
+**Open options discussed (user hasn't picked yet):** (a) add an explicit
+`--no-overwrite` guard so a run *guarantees* it never deletes/overwrites an
+existing `.lrc` it couldn't fetch; (b) harden silentblue (use the
+`index.php?search=` walkaround + retries/caching); (c) leave as-is.
+
+**To resume:** the vision server is **stopped** (user reclaimed the GPU; VRAM
+released to idle ~6%). Relaunch with `~/AI/start-vision qwen3.5-9b` (port 8081)
+before any new OCR run.
+
+---
+
+## 10. Commands cheat-sheet
 
 ```bash
 # local dev
 cd ~/Code/lyrics-fetcher
 uv sync --index-strategy unsafe-best-match   # ROCm torch + git-main transformers
-uv run pytest -q                              # 33 tests
+uv run pytest -q                              # 72 tests
 uv run lyrics-fetcher --help
 
 # typical use
