@@ -115,9 +115,37 @@ class WhisperCppAligner(BaseAligner):
         if not known or not segs:
             return [TimedLine(text=l.text, start=0.0) for l in lyrics.lines]
 
+        # monotonic DP: line -> segment index (keeps ordering, no chorus collapse)
         assign = self._align(known, segs)
+
+        # Interpolate: when several lines map to the same segment, spread them
+        # across that segment's [from, to] span instead of snapping all to its
+        # start (which produced overlapping/identical timestamps). Lines that map
+        # to distinct adjacent segments keep each segment's start, but we ensure
+        # they never go backwards.
         timed = []
-        for i, line in enumerate(lyrics.lines):
-            seg = segs[assign[i]]
-            timed.append(TimedLine(text=line.text, start=seg["from"] / 1000.0, end=seg["to"] / 1000.0))
+        # group consecutive lines by the segment they map to
+        groups = []  # (seg_idx, [line_idx])
+        for i, s in enumerate(assign):
+            if groups and groups[-1][0] == s:
+                groups[-1][1].append(i)
+            else:
+                groups.append((s, [i]))
+
+        for seg_idx, line_idxs in groups:
+            seg = segs[seg_idx]
+            t0, t1 = seg["from"] / 1000.0, seg["to"] / 1000.0
+            n = len(line_idxs)
+            for k, li in enumerate(line_idxs):
+                # evenly distribute across the segment duration; single line => start
+                start = t0 + (t1 - t0) * k / max(n, 1)
+                end = t0 + (t1 - t0) * (k + 1) / max(n, 1)
+                timed.append(TimedLine(text=known[li], start=start, end=end))
+
+        # hard safety: enforce monotonic non-decreasing starts
+        timed.sort(key=lambda tl: tl.start)
+        for i in range(1, len(timed)):
+            if timed[i].start < timed[i - 1].start:
+                timed[i] = TimedLine(text=timed[i].text, start=timed[i - 1].start,
+                                     end=max(timed[i].end, timed[i - 1].end))
         return timed
