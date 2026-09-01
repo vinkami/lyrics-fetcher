@@ -58,6 +58,14 @@ def _make_cache(use_cache: bool) -> LyricsCache | None:
     return LyricsCache() if use_cache else None
 
 
+def _maybe_separator(sep: bool):
+    """Build a VocalSeparator when ``--separation`` is requested, else None."""
+    if not sep:
+        return None
+    from .separation import make_separator
+    return make_separator()
+
+
 def _cmd_fetch(args: argparse.Namespace) -> int:
     if args.source:
         factory = SOURCE_FACTORY.get(args.source)
@@ -130,6 +138,7 @@ def _cmd_full(args: argparse.Namespace) -> int:
         ocr=ocr_engine,
         fetcher=FetchOrchestrator(cache=cache),
         use_whisper_fallback=args.whisper_fallback,
+        separator=_maybe_separator(getattr(args, "separation", False)),
     )
     result = pipe.run(audio=audio, out_dir=Path(args.out_dir), image=image,
                       write_html=not args.no_html,
@@ -162,6 +171,7 @@ def _cmd_album(args: argparse.Namespace) -> int:
         ocr=ocr_engine,
         fetcher=FetchOrchestrator(cache=cache),
         use_whisper_fallback=args.whisper_fallback,
+        separator=_maybe_separator(getattr(args, "separation", False)),
     )
 
     processed, unmatched, skipped = batch_album(
@@ -310,6 +320,9 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("--whisper-fallback", action="store_true",
                        help="best-effort: whisper-transcribe if no lyrics found "
                             "(default: report no lyrics; whisper is poor at Japanese)")
+    pfull.add_argument("--separation", action="store_true",
+                       help="separate a dry-vocal stem (demucs) before aligning — "
+                            "improves intro timing on BGM-dense songs; slower")
     pfull.set_defaults(func=_cmd_full)
 
     pal = sub.add_parser("album", help="Batch-process every track in an album folder")
@@ -336,6 +349,9 @@ def build_parser() -> argparse.ArgumentParser:
                           "(default: skip them; whisper is poor at Japanese singing)")
     pal.add_argument("--web-first", action="store_true",
                      help="try web fetchers before OCR for each track")
+    pal.add_argument("--separation", action="store_true",
+                     help="separate a dry-vocal stem (demucs) before aligning each "
+                          "track — improves intro timing on BGM-dense songs; slower")
     pal.add_argument("-q", "--quiet", action="store_true")
     pal.set_defaults(func=_cmd_album)
 

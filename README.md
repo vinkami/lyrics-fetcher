@@ -252,6 +252,11 @@ lyrics-fetcher full song.flac --image booklet.jpg --jellyfin
 # Batch an entire album: auto-map booklet pages -> tracks, align all
 lyrics-fetcher album "/music/Album Name" --jellyfin
 
+# Optionally separate a dry-vocal stem (demucs) before aligning — improves
+# intro timing on BGM-dense songs that make whisper hallucinate/even-spread.
+# Needs the `separation` dev extra installed (see setup). Slower.
+lyrics-fetcher full song.flac --image booklet.jpg --jellyfin --separation
+
 # Manually time lyrics by tapping a key per line (for songs that defeat AI)
 lyrics-fetcher manual song.flac lyrics.txt -o song.lrc
 
@@ -265,6 +270,23 @@ lyrics-fetcher cross-check song.flac lyrics.txt -v   # show every line
 `--aligner whisper` (default) uses whisper.cpp with anchor-based DP; `album`
 mode additionally merges large-v3-turbo.
 `--aligner qwen3` uses Qwen3-ForcedAligner (Japanese-capable, independent).
+
+### Vocal separation (`--separation`)
+`full` and `album` accept `--separation` to preprocess each audio file through
+**demucs** (`htdemucs`) and align against the clean dry-vocal stem instead of the
+full mix. This markedly improves intro/timing on **BGM-dense** songs — e.g.
+ASTEROID's 告げよ intro landed at 0:27/0:30/0:33 only on the separated stem,
+where raw whisper collapsed to even-spread. It is **opt-in, not default**, because
+separation can shift already-good songs by a few seconds.
+
+Install the optional extra (it is kept out of the default dependency graph because
+demucs pins numpy<2 on macOS, which conflicts with this project's numpy>=2.5.2 in
+uv's universal lock — the project targets Linux only):
+```bash
+uv sync --dev   # demucs is a dev dependency; installs on the linux/ROCm env
+```
+If demucs isn't installed, `--separation` degrades gracefully (warns and aligns
+the raw audio).
 
 ### Cross-check mode
 Whisper (Vulkan) and Qwen3-ForcedAligner are **independent** timing sources.

@@ -278,7 +278,34 @@ before any new OCR run.
   (`.hermes/plans/2026-09-02_stable-ts-alignment.md`) to fix drift/hallucination/repetition.
   Not started yet (user asked for a plan first).
 - **Two-column OCR** is a real gap (below stable-ts priority).
-- Vocal separation stays a candidate **opt-in flag** (not default).
+- ✅ **Vocal separation SHIPPED** (see §9c below) as an opt-in `--separation` flag.
+
+---
+
+## 9c. Session log — 2026-09-02 (cont.): vocal separation merged to main
+
+User decided the vocal-separation win is worth keeping → merged into `main`.
+
+**Feature (`lyrics_fetcher/separation.py` + `--separation` flag):**
+- `VocalSeparator` wraps **demucs `htdemucs`** (ROCm/GPU), writing a dry-vocal
+  `.wav` stem.
+- `Pipeline._align` separates the audio to a stem before alignment when a
+  separator is set; **falls back to raw audio on any separator error** (never
+  breaks a run).
+- `--separation` flag wired into `full` and `album` commands.
+- **Opt-in, not default** — separation can shift already-good songs by ~seconds.
+
+**Dependency handling (`pyproject.toml`):**
+- demucs is in the **dev dependency group** (`demucs==4.1.0`). Added a Linux-only
+  `[tool.uv] environments` restriction: demucs pins `numpy<2` on **macOS** only,
+  which conflicts with this project's `numpy>=2.5.2` in uv's universal lock. Since
+  this project only runs on Linux/ROCm (see Hardware), restricting uv resolution
+  to linux resolves the lock cleanly (demucs 4.1.0 + numpy 2.5.2 coexist fine).
+- `--separation` **degrades gracefully** if demucs isn't installed (warns + aligns
+  raw audio), so CI/tests pass without the model download.
+
+**Tests:** added `tests/test_separation.py` (3 tests: separator-absent→None,
+FakeSep used by Pipeline, FakeSep error→fallback). Suite now **75 passed**.
 
 ---
 

@@ -38,6 +38,7 @@ transformers = { git = "https://github.com/huggingface/transformers.git" }
 
 [dependency-groups]
 dev = [
+    "demucs==4.1.0",
     "pytest>=9.1.1",
 ]
 
@@ -46,3 +47,9 @@ packages = ["lyrics_fetcher"]
 
 [tool.uv]
 package = true
+# This project targets Linux only (AMD ROCm / RDNA4). Restricting the resolved
+# environments excludes macOS, where demucs would force numpy<2 and break the
+# universal lock against our numpy>=2.5.2.
+environments = [
+    "sys_platform == 'linux'",
+]
