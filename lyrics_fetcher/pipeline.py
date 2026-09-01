@@ -40,11 +40,16 @@ class Pipeline:
         ocr: BaseOCR | None = None,
         aligner: BaseAligner | None = None,
         use_whisper_fallback: bool = False,
+        separator=None,
     ):
         # default: web fetcher orchestrator + whisper aligner; OCR optional
         self.fetcher = fetcher if fetcher is not None else FetchOrchestrator()
         self.ocr = ocr
         self.aligner = aligner if aligner is not None else WhisperCppAligner()
+        # Optional vocal separator (demucs). When set, the audio is separated to
+        # a vocal stem before alignment — improves intro timing on BGM-dense
+        # songs (see separation.py). Never default (can shift already-good songs).
+        self.separator = separator
         # Default OFF: whisper is poor at Japanese singing, so tracks with no
         # lyrics are skipped (no .lrc) unless the user opts into best-effort.
         self.use_whisper_fallback = use_whisper_fallback
@@ -95,6 +100,28 @@ class Pipeline:
 
         return Lyrics(source="none", title=meta.title, artist=meta.artist)
 
+    # ---- alignment (optionally on a separated vocal stem) ----
+    def _align(self, audio: Path, lyrics: Lyrics) -> list[TimedLine]:
+        """Align known lyrics to the audio.
+
+        When ``self.separator`` is set, first separate a dry-vocal stem and align
+        against that (better intro timing on BGM-dense songs). If separation
+        fails, fall back to aligning the raw audio so a separator problem never
+        breaks a run.
+        """
+        target = audio
+        if self.separator is not None:
+            try:
+                import tempfile
+
+                scratch = Path(tempfile.mkdtemp(prefix="lf_sep_"))
+                target = self.separator.separate(audio, out_dir=scratch)
+            except Exception as e:
+                # separation is best-effort; never let it break alignment
+                print(f"warn: vocal separation failed for {audio.name}: {e}")
+                target = audio
+        return self.aligner.align(target, lyrics)
+
     # ---- main entry ----
     def run(
         self,
@@ -126,7 +153,7 @@ class Pipeline:
                 f"No lyrics found for {meta.title} (web fetchers failed and no OCR image given)"
             )
 
-        timed = self.aligner.align(audio, lyrics)
+        timed = self._align(audio, lyrics)
 
         lrc_writer = LrcWriter()
         html_writer = HtmlWriter(lyrics)

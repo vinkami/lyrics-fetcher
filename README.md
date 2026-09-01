@@ -252,6 +252,11 @@ lyrics-fetcher full song.flac --image booklet.jpg --jellyfin
 # Batch an entire album: auto-map booklet pages -> tracks, align all
 lyrics-fetcher album "/music/Album Name" --jellyfin
 
+# Optionally separate a dry-vocal stem (demucs) before aligning — improves
+# intro timing on BGM-dense songs that make whisper hallucinate/even-spread.
+# Needs the `separation` dev extra installed (see setup). Slower.
+lyrics-fetcher full song.flac --image booklet.jpg --jellyfin --separation
+
 # Manually time lyrics by tapping a key per line (for songs that defeat AI)
 lyrics-fetcher manual song.flac lyrics.txt -o song.lrc
 
@@ -265,6 +270,23 @@ lyrics-fetcher cross-check song.flac lyrics.txt -v   # show every line
 `--aligner whisper` (default) uses whisper.cpp with anchor-based DP; `album`
 mode additionally merges large-v3-turbo.
 `--aligner qwen3` uses Qwen3-ForcedAligner (Japanese-capable, independent).
+
+### Vocal separation (`--separation`)
+`full` and `album` accept `--separation` to preprocess each audio file through
+**demucs** (`htdemucs`) and align against the clean dry-vocal stem instead of the
+full mix. This markedly improves intro/timing on **BGM-dense** songs — e.g.
+ASTEROID's 告げよ intro landed at 0:27/0:30/0:33 only on the separated stem,
+where raw whisper collapsed to even-spread. It is **opt-in, not default**, because
+separation can shift already-good songs by a few seconds.
+
+Install the optional extra (it is kept out of the default dependency graph because
+demucs pins numpy<2 on macOS, which conflicts with this project's numpy>=2.5.2 in
+uv's universal lock — the project targets Linux only):
+```bash
+uv sync --dev   # demucs is a dev dependency; installs on the linux/ROCm env
+```
+If demucs isn't installed, `--separation` degrades gracefully (warns and aligns
+the raw audio).
 
 ### Cross-check mode
 Whisper (Vulkan) and Qwen3-ForcedAligner are **independent** timing sources.
@@ -303,6 +325,19 @@ After the "GO" countdown, press **RETURN** each time a line starts:
 - **Some songs defeat automation entirely** (e.g. ASTEROID's 告げよ — dense BGM
   intro that both whisper and Qwen3-ForcedAligner fail to time). That is why the
   `manual` subcommand exists: tap line starts by ear, then hand-edit.
+
+### Vocal separation & known alignment limits
+- A **vocal-separation spike** (demucs `htdemucs`) showed separation **clearly
+  improves intro timing** on dense-BGM songs (告げよ's intro landed at 0:27/0:30/0:33
+  on the separated stem) and is a candidate **opt-in `--separation` flag** — but it
+  also shifts already-good songs, so it's **not default**. See `poc/VOCAL_SEPARATION_SPIKE.md`.
+- Remaining **"break"/desync** (intro even-spread, off-by-one cascades, repeated-
+  chorus mis-matching, post-drift) are a known limitation of whisper-based anchor
+  alignment. A **stable-ts** plan to fix this is written at
+  `.hermes/plans/2026-09-02_stable-ts-alignment.md` (only starting after a PoC gate).
+- **Two-column booklets:** the VLM OCR (Qwen3.5-9B) sometimes **mis-reads 2-column
+  layouts** (skips to the second column's tail). This is non-deterministic (告げよ
+  succeeds, 命を振り回せ failed once) and a known OCR gap.
 
 ---
 
