@@ -304,6 +304,19 @@ After the "GO" countdown, press **RETURN** each time a line starts:
   intro that both whisper and Qwen3-ForcedAligner fail to time). That is why the
   `manual` subcommand exists: tap line starts by ear, then hand-edit.
 
+### Vocal separation & known alignment limits
+- A **vocal-separation spike** (demucs `htdemucs`) showed separation **clearly
+  improves intro timing** on dense-BGM songs (告げよ's intro landed at 0:27/0:30/0:33
+  on the separated stem) and is a candidate **opt-in `--separation` flag** — but it
+  also shifts already-good songs, so it's **not default**. See `poc/VOCAL_SEPARATION_SPIKE.md`.
+- Remaining **"break"/desync** (intro even-spread, off-by-one cascades, repeated-
+  chorus mis-matching, post-drift) are a known limitation of whisper-based anchor
+  alignment. A **stable-ts** plan to fix this is written at
+  `.hermes/plans/2026-09-02_stable-ts-alignment.md` (only starting after a PoC gate).
+- **Two-column booklets:** the VLM OCR (Qwen3.5-9B) sometimes **mis-reads 2-column
+  layouts** (skips to the second column's tail). This is non-deterministic (告げよ
+  succeeds, 命を振り回せ failed once) and a known OCR gap.
+
 ---
 
 ## Troubleshooting

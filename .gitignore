@@ -1,12 +1,3 @@
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-
-# test artifacts
-poc/audio/
-poc/out/
-out/
-vendor/
-*.wav
-*.srt
+# Large transient/generated artifacts (not source)
+_sep_out/
+_lrc_re-ocr/

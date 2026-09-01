@@ -236,6 +236,52 @@ before any new OCR run.
 
 ---
 
+## 9b. Session log — 2026-09-02 ASTEROID: vocal separation + re-OCR + alignment breaks
+
+### What happened this session
+1. **Vocal-separation spike (demucs) → NO-GO for pipeline, but a real quality win.**
+   Tested `demucs htdemucs` (ROCm/GPU, ~15s/track) + `audio-separator` (BLOCKED on
+   ROCm — `torchvision::nms does not exist` build mismatch). Results on ASTEROID:
+   - **告げよ:** 28→32 anchors; separated stem pulled out the intro that raw even-spread
+     couldn't — first lines landed at **0:27/0:30/0:33** (matches user's manual timing).
+   - **Cryptarithm (artificial language):** 0/12 both raw & sep → confirms artificial
+     language is a **phoneme** problem, NOT accompaniment; a separator can't fix it.
+   - **アンデッド:** same anchor count but timings shifted ~10s (regression risk on
+     easy songs).
+   Decision: separation is a quality win (esp. dense-BGM intros) but shifts already-good
+   songs — so it's a candidate for an **opt-in `--separation` flag, never default.**
+   Artifacts: `poc/sep_lrc.py`, `poc/VOCAL_SEPARATION_SPIKE.md` (results), vocal stems in
+   `~/Code/lyrics-fetcher/_sep_out/*_vocals.wav`. Deps NOT kept in pyproject (reverted).
+
+2. **Re-OCR of a freshly-photographed booklet → BEST lyrics yet.**
+   User re-photographed (5 photos, one per song, `20260902_*.jpg`). Re-OCR'd each with the
+   vision server + re-aligned on the vocal stems (`poc/re_ocr_asteroid.py` → `_lrc_re-ocr/`).
+   - **告げよ:** was skipping lines (OCR dropped then) → now continuous, intro at 0:27/0:30/0:33.
+   - **命を振り回せ:** was 63 lines with **告げよ lyrics mixed in** → now clean 38 lines.
+   - These are now deployed live (album folder); backups were removed per user.
+
+3. **Root cause of the remaining "breaks"/desync (from `-ojf` token data):**
+   - Intro hallucination → 0 confident anchors → even-spread (first lines wrong).
+   - whisper merges 2 lines into 1 segment → monotonic DP goes off-by-one until a later
+     anchor re-syncs ("all lines one late until a break").
+   - Repeated chorus lines fuzzy-match to the wrong (later) occurrence.
+   - Coarse 5s segments + even-spread between sparse anchors → "~6 kanas fast" drift after
+     self-correction.
+
+4. **Two-column OCR finding:** the VLM (Qwen3.5-9B) **fails to read 2-column booklets**
+   correctly — 命を振り回せ's two-column layout was mis-read (skips to the 2nd column's
+   tail after the 1st column). **告げよ** also has 2 columns and *succeeded* → success is
+   non-deterministic. This is a known OCR limitation to address (multi-column reading).
+
+### Priorities going forward
+- **Alignment "breaks" (most annoying):** plan written → **stable-ts** PoC
+  (`.hermes/plans/2026-09-02_stable-ts-alignment.md`) to fix drift/hallucination/repetition.
+  Not started yet (user asked for a plan first).
+- **Two-column OCR** is a real gap (below stable-ts priority).
+- Vocal separation stays a candidate **opt-in flag** (not default).
+
+---
+
 ## 10. Commands cheat-sheet
 
 ```bash
