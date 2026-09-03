@@ -162,7 +162,9 @@ blocks `setpci`); not worth re-debugging unless the user asks.
 
 ## 7. What's still broken / honest limits
 
-- **告げよ (ASTEROID track 03): NO automatic aligner handles its first ~2 min.**
+- ~~**告げよ (ASTEROID track 03): NO automatic aligner handles its first ~2 min.**~~
+  ✅ **RESOLVED 2026-09-04** — `--aligner stable-ts --separation` anchors the
+  intro (27.4/30.5/33.8s, PR #9 / §9d). Historical failure modes kept below.
   - whisper `medium` **hallucinates** ("メルエリアルリン" ×137); `large-v3-turbo`
     loops "作詞・作曲 初音ミク" then recognizes the back half (gave 24/53 anchors).
   - **Qwen3-ForcedAligner ALSO gives 0.0 for the first ~2min** (it's speech-trained;
@@ -274,9 +276,9 @@ before any new OCR run.
    non-deterministic. This is a known OCR limitation to address (multi-column reading).
 
 ### Priorities going forward
-- **Alignment "breaks" (most annoying):** plan written → **stable-ts** PoC
-  (`.hermes/plans/2026-09-02_stable-ts-alignment.md`) to fix drift/hallucination/repetition.
-  Not started yet (user asked for a plan first).
+- **Alignment "breaks" (most annoying):** ✅ **DONE** — stable-ts PoC → GO →
+  shipped as `--aligner stable-ts` (PR #9, §9d). Fixes intro even-spread,
+  off-by-one cascades, repeated-chorus mis-matching, post-correction drift.
 - **Two-column OCR** is a real gap (below stable-ts priority).
 - ✅ **Vocal separation SHIPPED** (see §9c below) as an opt-in `--separation` flag.
 
@@ -349,13 +351,28 @@ contract as `--separation`:
   installs them too — the lazy import is for `--no-dev` / production installs).
   Phase-0 evidence `poc/out/stablets_results.json` is deliberately tracked
   (first tracked file in `poc/out`).
-- **Tests:** `tests/test_stablets.py` — 15 tests (fake-result `_line_times`
-  units: exact/whitespace/repeated-line/overshoot/exhausted; lazy-import
-  contract; load & align failure → fallback; monotonic clamp; CLI routing +
-  choices; settings resolution). Suite now **90 passed**; the tests are pure
-  logic, so CI passes on a runner with no GPU or model download (CI does
-  install the dev group). README: Stable-TS section + engine-selection +
-  config-key updates.
+- **Tests:** `tests/test_stablets.py` — 24 tests (fake-result `_line_times`
+  units: exact/whitespace/repeated-line/overshoot/exhausted, NFKC+punctuation
+  parity, frozen-tail coverage guard, empty/punct-only line hold-previous;
+  lazy-import contract; load & align failure → fallback; monotonic clamp; CLI
+  routing + fallback flag passthrough; settings resolution). Suite now
+  **99 passed**; the tests are pure logic, so CI passes on a runner with no
+  GPU or model download (CI does install the dev group). README: Stable-TS
+  section + engine-selection + config-key updates.
+- **2-stage subagent review findings that shaped the final code:** the
+  `regroup="p"` + word-stream-coverage guard (`_InsufficientCoverage` → same
+  fallback path; ≥4 unanchored trailing lines is truncation, ≤3 is a legit
+  silent outro), `_norm` = NFKC + `WhisperCppAligner._clean`'s class (a ±1-char
+  count error per line cascades as drift), and empty/punctuation-only lyric
+  lines must HOLD the previous start (a `None` escapes the clamp outside the
+  try → uncaught TypeError; utaten emits blank lines via bare splitlines).
+- **MERGED as PR #9 (`7d15816`), CI green.** Post-merge end-to-end trial via
+  `lyrics-fetcher compile <stem> <lyrics.txt> --aligner stable-ts` on all 5
+  ASTEROID songs (`out/stablets_trial/`): first-3 告げよ = 27.36/30.54/33.76
+  (reproduces the gate exactly), 0 monotonic violations on all 5. 命を振り回せ
+  ends its last 12 lines ~140–144s (deployed says 182–206s) — plausible but
+  UNVERIFIED by ear; that song's deployed .lrc is the known-bad one, so
+  listen before deploying either.
 
 ---
 
