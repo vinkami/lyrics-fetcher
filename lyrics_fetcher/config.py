@@ -44,6 +44,11 @@ class Settings:
     qwen3_aligner_model: Path = Path("/mnt/fnos/storage/ai-models/qwen3-forcedaligner/model")
     qwen3_aligner_language: str = "Japanese"
 
+    # --- stable-ts (opt-in forced alignment, --aligner stable-ts) ---
+    stable_ts_model: str = "medium"
+    stable_ts_lang: str = "ja"
+    stable_ts_device: str = "cuda"  # RX 9060 XT under ROCm; the eGPU HANGS
+
     # --- output ---
     lrc_by: str = "lyrics-fetcher"
     jellyfin_default: bool = False
@@ -128,6 +133,7 @@ def _apply_toml(s: Settings, data: dict) -> Settings:
                     "whisper_lang", "whisper_max_len", "whisper_device"],
         "vision": ["vision_api", "vision_model"],
         "qwen3_aligner": ["qwen3_aligner_model", "qwen3_aligner_language"],
+        "stable_ts": ["stable_ts_model", "stable_ts_lang", "stable_ts_device"],
         "output": ["lrc_by", "jellyfin_default", "write_html_default"],
         "tuning": ["anchor_min_score", "request_timeout"],
     }
@@ -155,6 +161,7 @@ def _apply_overrides(s: Settings, overrides: dict) -> Settings:
                             "whisper_lang", "whisper_max_len", "whisper_device"],
                 "vision": ["vision_api", "vision_model"],
                 "qwen3_aligner": ["qwen3_aligner_model", "qwen3_aligner_language"],
+                "stable_ts": ["stable_ts_model", "stable_ts_lang", "stable_ts_device"],
                 "output": ["lrc_by", "jellyfin_default", "write_html_default"],
                 "tuning": ["anchor_min_score", "request_timeout"],
             }.get(section, [])

@@ -28,8 +28,20 @@ from .manual_align import _cmd_manual
 from .config import load, settings
 
 
+def _make_whisper_aligner(args, default_extra_turbo: bool = False) -> WhisperCppAligner:
+    """Resolve --binary/--model-whisper/--extra-model into a WhisperCppAligner
+    (single source of truth: used by the default branch AND as the stable-ts
+    fallback, so those flags reach the fallback when it engages)."""
+    binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
+    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
+    extra = tuple(Path(x) for x in (getattr(args, "extra_model", None) or ())) if getattr(args, "extra_model", None) else None
+    if default_extra_turbo and (getattr(args, "extra_model", None) is None):
+        return WhisperCppAligner(binary=binary, model=model, extra_models=None)
+    return WhisperCppAligner(binary=binary, model=model, extra_models=extra)
+
+
 def _make_aligner(args, default_extra_turbo: bool = False) -> object:
-    """Build an aligner by name (--aligner {whisper,qwen3}).
+    """Build an aligner by name (--aligner {whisper,qwen3,stable-ts}).
 
     ``default_extra_turbo``: if True and extra models are not explicitly given,
     include the configured extra models (default large-v3-turbo).
@@ -39,13 +51,15 @@ def _make_aligner(args, default_extra_turbo: bool = False) -> object:
         from .aligner.qwen3_forced_aligner import Qwen3ForcedAligner
         qm = getattr(args, "qwen3_model", None)
         return Qwen3ForcedAligner(model_dir=Path(qm) if qm else None)
+    if name == "stable-ts":
+        # lazy import: stable_whisper is an optional dev dep (like demucs)
+        from .aligner.stable_ts import StableTSAligner
+        # pass the whisper.cpp fallback built from the SAME CLI flags, so
+        # --binary/--model-whisper/--extra-model are not lost when it engages
+        # (construction is cheap: settings resolution only, no subprocess)
+        return StableTSAligner(fallback=_make_whisper_aligner(args, default_extra_turbo))
 
-    binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
-    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
-    extra = tuple(Path(x) for x in (getattr(args, "extra_model", None) or ())) if getattr(args, "extra_model", None) else None
-    if default_extra_turbo and (getattr(args, "extra_model", None) is None):
-        return WhisperCppAligner(binary=binary, model=model, extra_models=None)
-    return WhisperCppAligner(binary=binary, model=model, extra_models=extra)
+    return _make_whisper_aligner(args, default_extra_turbo)
 
 SOURCE_FACTORY = {
     "utaten": UtatenFetcher,
@@ -272,8 +286,8 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--album", default="")
     pc.add_argument("--binary", default=None, help="path to whisper-cli")
     pc.add_argument("--model-whisper", default=None, help="path to ggml model")
-    pc.add_argument("--aligner", choices=["whisper", "qwen3"], default="whisper",
-                    help="alignment engine: whisper (cpp) or qwen3 (ForcedAligner)")
+    pc.add_argument("--aligner", choices=["whisper", "qwen3", "stable-ts"], default="whisper",
+                    help="alignment engine: whisper (cpp), qwen3 (ForcedAligner), or stable-ts (forced alignment, dev extra; falls back to whisper on failure)")
     pc.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
     pc.add_argument("--config", default=None, help="path to a config TOML file")
     pc.set_defaults(func=_cmd_compile)
@@ -306,8 +320,8 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("--extra-model", action="append", default=None,
                        help="extra whisper model(s) to transcribe with for anchor "
                             "merging; repeatable. Helps hallucinating songs.")
-    pfull.add_argument("--aligner", choices=["whisper", "qwen3"], default="whisper",
-                       help="alignment engine: whisper (cpp) or qwen3 (ForcedAligner)")
+    pfull.add_argument("--aligner", choices=["whisper", "qwen3", "stable-ts"], default="whisper",
+                       help="alignment engine: whisper (cpp), qwen3 (ForcedAligner), or stable-ts (forced alignment, dev extra; falls back to whisper on failure)")
     pfull.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
     pfull.add_argument("--config", default=None, help="path to a config TOML file")
     pfull.add_argument("--no-html", action="store_true", help="skip HTML companion")
@@ -336,8 +350,8 @@ def build_parser() -> argparse.ArgumentParser:
     pal.add_argument("--model-whisper", default=None)
     pal.add_argument("--extra-model", action="append", default=None,
                      help="extra whisper model(s); default large-v3-turbo")
-    pal.add_argument("--aligner", choices=["whisper", "qwen3"], default="whisper",
-                     help="alignment engine: whisper (cpp) or qwen3 (ForcedAligner)")
+    pal.add_argument("--aligner", choices=["whisper", "qwen3", "stable-ts"], default="whisper",
+                     help="alignment engine: whisper (cpp), qwen3 (ForcedAligner), or stable-ts (forced alignment, dev extra; falls back to whisper on failure)")
     pal.add_argument("--qwen3-model", default=None, help="path to Qwen3-ForcedAligner model dir")
     pal.add_argument("--config", default=None, help="path to a config TOML file")
     pal.add_argument("--no-html", action="store_true")

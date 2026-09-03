@@ -27,6 +27,10 @@ For each song it:
 3. **Aligns** the known lyric lines to timestamps using:
    - **whisper.cpp** (Vulkan on the RX 9060 XT, medium model) with monotonic
      anchor-based DP — interpolates between confident matches.
+   - **stable-ts** (opt-in `--aligner stable-ts`): forces the known lyrics
+     through whisper with word-level timestamps — fixes the anchor-DP failure
+     modes (intro even-spread, off-by-one cascades, ~6-kana drift); any
+     failure falls back to whisper.cpp automatically.
    - **Qwen3-ForcedAligner** (optional LLM aligner, Japanese support) as a
      second, independent timing source.
    - **`manual`** — tap-a-key timing by ear for songs automation can't handle.
@@ -53,7 +57,7 @@ lyrics-fetcher/
 │   ├── ocr/                    # booklet OCR as a lyrics source
 │   │   ├── base.py  vision.py (Qwen3.5-9B VLM)  tesseract.py (CPU fallback)
 │   ├── aligner/
-│   │   ├── base.py  whisper_cpp.py  faster_whisper_aligner.py  qwen3_forced_aligner.py
+│   │   ├── base.py  whisper_cpp.py  faster_whisper_aligner.py  qwen3_forced_aligner.py  stable_ts.py
 │   └── output/writers.py       # LRC + HTML(furigana) writers
 ├── poc/                        # proof-of-concept scripts (single-song demos)
 ├── PLAN.md                     # design decisions & evolution notes
@@ -96,6 +100,7 @@ Key sections:
   `whisper_lang`, `whisper_max_len`, `whisper_device`
 - `[vision]` — `vision_api`, `vision_model` (the local llama-server for OCR)
 - `[qwen3_aligner]` — `qwen3_aligner_model`, `qwen3_aligner_language`
+- `[stable_ts]` — `stable_ts_model`, `stable_ts_lang`, `stable_ts_device`
 - `[output]` — `lrc_by`, `jellyfin_default`, `write_html_default`
 - `[tuning]` — `anchor_min_score`, `request_timeout`
 
@@ -243,7 +248,7 @@ lyrics-fetcher ocr path/to/booklet.jpg --engine vlm
 
 # Compile: align known lyrics text against an audio file -> .lrc
 lyrics-fetcher compile song.flac lyrics.txt -o song.lrc \
-    --aligner whisper          # or --aligner qwen3
+    --aligner whisper          # or --aligner qwen3 / stable-ts
 
 # Full pipeline for one song (fetch/OCR -> align -> .lrc + .html)
 # --jellyfin writes the output next to the song file (media-player layout)
@@ -270,6 +275,7 @@ lyrics-fetcher cross-check song.flac lyrics.txt -v   # show every line
 `--aligner whisper` (default) uses whisper.cpp with anchor-based DP; `album`
 mode additionally merges large-v3-turbo.
 `--aligner qwen3` uses Qwen3-ForcedAligner (Japanese-capable, independent).
+`--aligner stable-ts` uses stable-whisper forced alignment (see below).
 
 ### Vocal separation (`--separation`)
 `full` and `album` accept `--separation` to preprocess each audio file through
@@ -287,6 +293,34 @@ uv sync --dev   # demucs is a dev dependency; installs on the linux/ROCm env
 ```
 If demucs isn't installed, `--separation` degrades gracefully (warns and aligns
 the raw audio).
+
+### Stable-TS alignment (opt-in, `--aligner stable-ts`)
+**stable-ts** (stabilize-whisper) forces the *known* lyrics through whisper and
+gets word-level timestamps back, so every line start comes from the audio —
+no anchors, no interpolation. It fixes the three failure modes of the
+whisper.cpp anchor DP: **intro even-spread** (whisper hallucinates → zero
+confident anchors), **off-by-one cascades** (two lyric lines merged into one
+segment), and **~6-kana drift** after a resync. Validated on all 5 ASTEROID
+songs: 告げよ's intro anchored at 0:27/0:30/0:34, アンデッド's intro fixed, and
+repeated chorus lines kept on their correct occurrences (0 monotonic
+violations across the album).
+
+```bash
+lyrics-fetcher full song.flac --image booklet.jpg --jellyfin --aligner stable-ts
+```
+
+- stable-ts is a **dev-group dep** like demucs (kept out of default deps for
+  the same Linux-only lock reason): install with `uv sync --dev` — and note
+  a plain `uv sync` already includes the dev group, so CI installs it too.
+  The lazy `stable_whisper` import keeps the module importable in `--no-dev`
+  / production installs and in any env without the extra.
+- Runs on the RX 9060 XT via torch ROCm (`stable_ts_device = "cuda"`);
+  `medium` peaks at **~3.2 GiB VRAM**, so it coexists with whisper.cpp's
+  models and the eGPU-hosted vision server. Alignment takes ~6–36 s/song.
+  Do NOT point it at the eGPU (the RX 6600 XT hosting the vision server is
+  torch device index 2 and hangs on first compute).
+- **Any failure — missing lib, OOM, model-download error — warns and falls
+  back to whisper.cpp**, so opting in can never break a run.
 
 ### Cross-check mode
 Whisper (Vulkan) and Qwen3-ForcedAligner are **independent** timing sources.
@@ -333,8 +367,9 @@ After the "GO" countdown, press **RETURN** each time a line starts:
   also shifts already-good songs, so it's **not default**. See `poc/VOCAL_SEPARATION_SPIKE.md`.
 - Remaining **"break"/desync** (intro even-spread, off-by-one cascades, repeated-
   chorus mis-matching, post-drift) are a known limitation of whisper-based anchor
-  alignment. A **stable-ts** plan to fix this is written at
-  `.hermes/plans/2026-09-02_stable-ts-alignment.md` (only starting after a PoC gate).
+  alignment. **stable-ts forced alignment ships as the opt-in
+  `--aligner stable-ts`** (Phase 0 gate passed 2026-09-04; see the Stable-TS
+  section above and `poc/stablets_align.py`).
 - **Two-column booklets:** the VLM OCR (Qwen3.5-9B) sometimes **mis-reads 2-column
   layouts** (skips to the second column's tail). This is non-deterministic (告げよ
   succeeds, 命を振り回せ failed once) and a known OCR gap.

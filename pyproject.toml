@@ -39,7 +39,9 @@ transformers = { git = "https://github.com/huggingface/transformers.git" }
 [dependency-groups]
 dev = [
     "demucs==4.1.0",
+    "openai-whisper>=20250625",
     "pytest>=9.1.1",
+    "stable-ts>=2.19.1",
 ]
 
 [tool.hatch.build.targets.wheel]
