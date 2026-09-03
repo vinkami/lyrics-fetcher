@@ -1,7 +1,9 @@
 """Tests for the stable-ts aligner (opt-in forced alignment).
 
-stable_whisper is an optional DEV dependency (not installed in CI), and these
-tests never touch it, the GPU, or a model download: the per-line timing logic
+stable-ts is a dev-group dep: CI installs it (plain `uv sync` includes the
+dev group), but `--no-dev` production installs lack the extra — the lazy
+import keeps the module importable there, and these tests never touch
+stable_whisper, the GPU, or a model download: the per-line timing logic
 runs on FAKE stable-ts result objects (segments -> words with .start/.word),
 and error paths use stubbed _load/model. Same fake-injection pattern as
 tests/test_aligner.py and tests/test_separation.py.
@@ -10,11 +12,12 @@ from __future__ import annotations
 
 import argparse
 import builtins
+import unicodedata
 
 import pytest
 
 from lyrics_fetcher.aligner.base import BaseAligner, TimedLine
-from lyrics_fetcher.aligner.stable_ts import StableTSAligner
+from lyrics_fetcher.aligner.stable_ts import _InsufficientCoverage, StableTSAligner
 from lyrics_fetcher.config import settings
 from lyrics_fetcher.models import LyricLine, Lyrics
 
@@ -57,7 +60,7 @@ class FakeFallback(BaseAligner):
 # ---- lazy-import contract: module must work without stable_whisper ----
 def test_construct_and_align_without_stable_whisper(monkeypatch, tmp_path):
     """Construction and the fallback path never import stable_whisper, so the
-    CLI/CI works even with the dev extra absent."""
+    module works in a --no-dev / production install without the extra."""
     real_import = builtins.__import__
 
     def blocked(name, *a, **k):
@@ -135,6 +138,42 @@ def test_line_times_empty_and_no_words():
     assert times == [2.0, 2.0]
 
 
+# ---- _line_times: normalization parity (FIX B) ----
+def test_line_times_words_omit_punctuation_and_brackets():
+    # stable-ts segmentation can drop 、。！ and 「」; _norm must strip the
+    # SAME character class as whisper.cpp's _clean on both sides, or the
+    # mis-counted target over-consumes words and drift cascades downstream
+    res = FakeResult([[(0.0, "こんにちは"), (5.0, "世界"), (9.0, "さよなら")]])
+    times = StableTSAligner._line_times(res, ["こんにちは、世界！", "「さよなら」"])
+    assert times == [0.0, 9.0]
+
+
+def test_line_times_nfd_target_matches_nfc_word_stream():
+    # JIS-sourced lyrics can be NFD-decomposed (ハ+゛…) while stable-ts emits
+    # NFC; without NFKC the target counts extra combining marks
+    nfd = unicodedata.normalize("NFD", "パーティー")  # 6 code points, 4 NFC
+    res = FakeResult([[(0.0, "パーティー"), (6.0, "ok")]])
+    times = StableTSAligner._line_times(res, [nfd, "ok"])
+    assert times == [0.0, 6.0]
+
+
+# ---- _line_times: frozen-tail coverage guard (FIX A) ----
+def test_line_times_raises_on_long_frozen_tail():
+    # 2-word stream vs 10 lines: 8 lines would freeze at the same timestamp
+    res = FakeResult([[(0.0, "aa"), (1.0, "bb")]])
+    lines = ["aa", "bb"] + ["zz"] * 8
+    with pytest.raises(_InsufficientCoverage):
+        StableTSAligner._line_times(res, lines)
+
+
+def test_line_times_short_frozen_tail_stays_best_effort():
+    # a legit silent outro (<=3 uncovered trailing lines) keeps holding the
+    # previous time instead of bailing to the fallback
+    res = FakeResult([[(0.0, "aa")]])
+    times = StableTSAligner._line_times(res, ["aa", "bb", "cc"])
+    assert times == [0.0, 0.0, 0.0]
+
+
 # ---- align() success path + monotonic clamp ----
 class FakeModel:
     def __init__(self, result):
@@ -209,6 +248,42 @@ def test_align_empty_lyrics_falls_back(tmp_path, capsys):
     assert "no lyric lines" in capsys.readouterr().err
 
 
+def test_align_falls_back_on_insufficient_coverage(tmp_path, capsys):
+    # FIX A: a 2-word stream for a 10-line Lyrics is a truncated alignment,
+    # not a silent outro — must warn on stderr and use the fallback instead
+    # of shipping 8 lines frozen at one timestamp
+    fb = FakeFallback()
+    al = StableTSAligner(fallback=fb)
+    res = FakeResult([[(0.0, "l0"), (1.0, "l1")]])
+    al._load = lambda: FakeModel(res)
+    timed = al.align(tmp_path / "s.wav", lyrics_of(*[f"l{i}" for i in range(10)]))
+    assert fb.calls, "fallback aligner must have been used"
+    assert all(t.start == 99.0 for t in timed)
+    err = capsys.readouterr().err
+    assert "InsufficientCoverage" in err and "unanchored" in err and "falling back" in err
+
+
+def test_load_failure_not_retried(monkeypatch):
+    # FIX E: after a failed load the instance must not re-attempt (an offline
+    # album run would pay ~5 s per track); and the ImportError names the fix
+    al = StableTSAligner()
+    attempts = []
+    real_import = builtins.__import__
+
+    def blocked(name, *a, **k):
+        if name == "stable_whisper":
+            attempts.append(name)
+            raise ImportError("No module named 'stable_whisper'")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    with pytest.raises(ImportError, match=r"install the dev extra: `uv sync --dev`"):
+        al._load()
+    with pytest.raises(RuntimeError, match="not retrying"):
+        al._load()
+    assert attempts == ["stable_whisper"]  # the 2nd call never re-imported
+
+
 def test_default_fallback_is_whisper_cpp():
     from lyrics_fetcher.aligner.whisper_cpp import WhisperCppAligner
     al = StableTSAligner()
@@ -223,6 +298,25 @@ def test_cli_make_aligner_routes_stable_ts():
     # constructing must work even if stable_whisper were absent (lazy imports)
     al = _make_aligner(argparse.Namespace(aligner="stable-ts"))
     assert isinstance(al, StableTSAligner)
+
+
+def test_cli_stable_ts_fallback_gets_whisper_flags(tmp_path):
+    # FIX D: --binary/--model-whisper/--extra-model must reach the whisper.cpp
+    # fallback, not just the default branch
+    from lyrics_fetcher.aligner.stable_ts import StableTSAligner
+    from lyrics_fetcher.aligner.whisper_cpp import WhisperCppAligner
+    from lyrics_fetcher.cli import _make_aligner
+    ns = argparse.Namespace(aligner="stable-ts",
+                            binary=str(tmp_path / "whisper-cli"),
+                            model_whisper=str(tmp_path / "ggml-medium.bin"),
+                            extra_model=[str(tmp_path / "ggml-turbo.bin")])
+    al = _make_aligner(ns)
+    assert isinstance(al, StableTSAligner)
+    fb = al.fallback
+    assert isinstance(fb, WhisperCppAligner)
+    assert fb.binary == tmp_path / "whisper-cli"
+    assert fb.model == tmp_path / "ggml-medium.bin"
+    assert fb.extra_models == [tmp_path / "ggml-turbo.bin"]
 
 
 def test_cli_parser_accepts_stable_ts_everywhere_but_crosscheck():

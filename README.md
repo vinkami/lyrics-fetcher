@@ -309,8 +309,11 @@ violations across the album).
 lyrics-fetcher full song.flac --image booklet.jpg --jellyfin --aligner stable-ts
 ```
 
-- stable-ts is a **dev extra** like demucs (kept out of default deps for the
-  same Linux-only lock reason): install with `uv sync --dev`.
+- stable-ts is a **dev-group dep** like demucs (kept out of default deps for
+  the same Linux-only lock reason): install with `uv sync --dev` — and note
+  a plain `uv sync` already includes the dev group, so CI installs it too.
+  The lazy `stable_whisper` import keeps the module importable in `--no-dev`
+  / production installs and in any env without the extra.
 - Runs on the RX 9060 XT via torch ROCm (`stable_ts_device = "cuda"`);
   `medium` peaks at **~3.2 GiB VRAM**, so it coexists with whisper.cpp's
   models and the eGPU-hosted vision server. Alignment takes ~6–36 s/song.

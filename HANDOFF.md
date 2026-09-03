@@ -344,12 +344,17 @@ contract as `--separation`:
   plain strings and intentionally excluded from `_coerce()`'s Path-coercion branch
   (which triggers on Path-typed field defaults): they are a whisper size name, a
   language code, and a torch device string — never filesystem paths.
-- Deps: `stable-ts` + `openai-whisper` already in the **dev group** (`uv sync --dev`).
+- Deps: `stable-ts` + `openai-whisper` **added to the dev group on this
+  branch** (`uv sync --dev`; a plain `uv sync` already includes dev, so CI
+  installs them too — the lazy import is for `--no-dev` / production installs).
+  Phase-0 evidence `poc/out/stablets_results.json` is deliberately tracked
+  (first tracked file in `poc/out`).
 - **Tests:** `tests/test_stablets.py` — 15 tests (fake-result `_line_times`
   units: exact/whitespace/repeated-line/overshoot/exhausted; lazy-import
   contract; load & align failure → fallback; monotonic clamp; CLI routing +
-  choices; settings resolution). Suite now **90 passed**, CI-safe without
-  stable_whisper installed. README: Stable-TS section + engine-selection +
+  choices; settings resolution). Suite now **90 passed**; the tests are pure
+  logic, so CI passes on a runner with no GPU or model download (CI does
+  install the dev group). README: Stable-TS section + engine-selection +
   config-key updates.
 
 ---

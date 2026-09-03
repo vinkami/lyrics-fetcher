@@ -28,6 +28,18 @@ from .manual_align import _cmd_manual
 from .config import load, settings
 
 
+def _make_whisper_aligner(args, default_extra_turbo: bool = False) -> WhisperCppAligner:
+    """Resolve --binary/--model-whisper/--extra-model into a WhisperCppAligner
+    (single source of truth: used by the default branch AND as the stable-ts
+    fallback, so those flags reach the fallback when it engages)."""
+    binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
+    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
+    extra = tuple(Path(x) for x in (getattr(args, "extra_model", None) or ())) if getattr(args, "extra_model", None) else None
+    if default_extra_turbo and (getattr(args, "extra_model", None) is None):
+        return WhisperCppAligner(binary=binary, model=model, extra_models=None)
+    return WhisperCppAligner(binary=binary, model=model, extra_models=extra)
+
+
 def _make_aligner(args, default_extra_turbo: bool = False) -> object:
     """Build an aligner by name (--aligner {whisper,qwen3,stable-ts}).
 
@@ -42,14 +54,12 @@ def _make_aligner(args, default_extra_turbo: bool = False) -> object:
     if name == "stable-ts":
         # lazy import: stable_whisper is an optional dev dep (like demucs)
         from .aligner.stable_ts import StableTSAligner
-        return StableTSAligner()
+        # pass the whisper.cpp fallback built from the SAME CLI flags, so
+        # --binary/--model-whisper/--extra-model are not lost when it engages
+        # (construction is cheap: settings resolution only, no subprocess)
+        return StableTSAligner(fallback=_make_whisper_aligner(args, default_extra_turbo))
 
-    binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
-    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
-    extra = tuple(Path(x) for x in (getattr(args, "extra_model", None) or ())) if getattr(args, "extra_model", None) else None
-    if default_extra_turbo and (getattr(args, "extra_model", None) is None):
-        return WhisperCppAligner(binary=binary, model=model, extra_models=None)
-    return WhisperCppAligner(binary=binary, model=model, extra_models=extra)
+    return _make_whisper_aligner(args, default_extra_turbo)
 
 SOURCE_FACTORY = {
     "utaten": UtatenFetcher,
