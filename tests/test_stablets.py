@@ -162,9 +162,11 @@ def test_align_clamps_non_monotonic_times(tmp_path):
     # a word hiccup handing line 2 an earlier start must be clamped, never
     # shipped (LRC players assume non-decreasing starts)
     al = StableTSAligner()
-    al._load = lambda: FakeModel(FakeResult([
-        [(0.0, "ab"), (5.0, "cd"), (3.0, "ef")],
-    ]))
+    res = FakeResult([[(0.0, "ab"), (5.0, "cd"), (3.0, "ef")]])
+    # _line_times stays RAW — the decrease (3.0 after 5.0) is visible here,
+    # proving the clamp lives at the align() level, not inside _line_times
+    assert StableTSAligner._line_times(res, ["ab", "cd", "ef"]) == [0.0, 5.0, 3.0]
+    al._load = lambda: FakeModel(res)
     timed = al.align(tmp_path / "s.wav", lyrics_of("ab", "cd", "ef"))
     assert [t.start for t in timed] == [0.0, 5.0, 5.0]
 

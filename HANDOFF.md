@@ -340,7 +340,10 @@ contract as `--separation`:
 - CLI: `--aligner stable-ts` on `compile`/`full`/`album` (lazy-import branch in
   `_make_aligner`). `cross-check` intentionally unchanged (still whisper+qwen3).
 - Config: `[stable_ts]` section (`stable_ts_model`=medium, `stable_ts_lang`=ja,
-  `stable_ts_device`=cuda) in `config.py` + `config.example.toml`.
+  `stable_ts_device`=cuda) in `config.py` + `config.example.toml`. All three are
+  plain strings and intentionally excluded from `_coerce()`'s Path-coercion branch
+  (which triggers on Path-typed field defaults): they are a whisper size name, a
+  language code, and a torch device string — never filesystem paths.
 - Deps: `stable-ts` + `openai-whisper` already in the **dev group** (`uv sync --dev`).
 - **Tests:** `tests/test_stablets.py` — 15 tests (fake-result `_line_times`
   units: exact/whitespace/repeated-line/overshoot/exhausted; lazy-import
