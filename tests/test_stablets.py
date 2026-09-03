@@ -138,6 +138,33 @@ def test_line_times_empty_and_no_words():
     assert times == [2.0, 2.0]
 
 
+def test_line_times_empty_and_punct_only_lines_hold_previous():
+    # Regression: blank lines (utaten emits them via bare splitlines) and
+    # punctuation-only lines (「！！」norms to "") consume no words. They must
+    # HOLD the previous start — a None would sail out of _line_times and the
+    # monotonic clamp in align() runs outside the try -> uncaught TypeError,
+    # breaking the "any failure falls back" contract.
+    res = FakeResult([[(0.0, "ab"), (5.0, "cd")]])
+    assert StableTSAligner._line_times(res, ["ab", "", "cd"]) == [0.0, 0.0, 5.0]
+    assert StableTSAligner._line_times(res, ["ab", "！！", "cd"]) == [0.0, 0.0, 5.0]
+    # leading empty line holds 0.0, does not anchor at a bogus word time
+    assert StableTSAligner._line_times(res, ["", "ab", "cd"]) == [0.0, 0.0, 5.0]
+
+
+def test_align_punct_only_line_does_not_crash(tmp_path):
+    # end-to-end guard for the same hole through align()'s clamp
+    class _M:
+        def align(self, *a, **k):
+            return FakeResult([[(1.0, "ab"), (6.0, "cd")]])
+
+    al = StableTSAligner()
+    al._model = _M()
+    lyrics = Lyrics(source="test", lines=[LyricLine(text="ab"), LyricLine(text="！！"),
+                           LyricLine(text="cd")])
+    timed = al.align(tmp_path / "song.wav", lyrics)
+    assert [t.start for t in timed] == [1.0, 1.0, 6.0]
+
+
 # ---- _line_times: normalization parity (FIX B) ----
 def test_line_times_words_omit_punctuation_and_brackets():
     # stable-ts segmentation can drop 、。！ and 「」; _norm must strip the

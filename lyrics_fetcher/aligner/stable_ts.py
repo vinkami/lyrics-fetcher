@@ -160,6 +160,11 @@ class StableTSAligner(BaseAligner):
                     raise _InsufficientCoverage(
                         f"word stream ended with {uncovered}/{len(lines)} "
                         f"lyric lines unanchored")
+            if line_start is None:
+                # No words consumed for this line: empty target (blank or
+                # punctuation-only line — utaten emits those) or a short
+                # frozen tail. Hold the previous start; None would crash the
+                # monotonic clamp in align() outside the try.
                 line_start = times[-1] if times else 0.0
             times.append(line_start)
         return times
