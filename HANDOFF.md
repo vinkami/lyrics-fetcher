@@ -309,6 +309,48 @@ FakeSep used by Pipeline, FakeSep error→fallback). Suite now **75 passed**.
 
 ---
 
+## 9d. Session log — 2026-09-04: stable-ts Phase 0 gate = GO + Phase 1 shipped
+
+**Phase 0 (validated, evidence: `poc/stablets_align.py`, `poc/stablets_vram.py`,
+`poc/out/stablets_results.json`):** stable-ts 2.19.1 + openai-whisper run on our
+torch 2.11.0+rocm7.2 (RX 9060 XT = dev `cuda:0`); medium model ~5s load, 6–36s
+align per ASTEROID song, **3.23 GiB peak VRAM**, **0 monotonic violations** on
+every song. Gate results per song:
+- **告げよ:** intro anchored at **27.4 / 30.5 / 33.8s** (the even-spread failure
+  mode fixed — starts come from audio, not interpolation).
+- **アンデッド:** intro anchored at **14.3s**; first **ずっと綺麗…** line at
+  **43.9s** (correct occurrence — whisper.cpp's fuzzy DP had matched the later
+  repeat at 152s).
+- 命を振り回せ / 黒い目 / サテライト: sane starts, 0 monotonic violations; the
+  >2s-vs-current deltas are stable-ts *correcting* the old interpolated times.
+
+**ROCm finding:** no patching needed — `stable_whisper.load_model(device="cuda")`
+works out of the box on RDNA4. **eGPU note:** user wired the RX 6600 XT for the
+vision server; stable-ts must stay on the 9060 XT — the eGPU is torch device
+index 2 and **HANGS on first compute** under ROCm. Do NOT target it.
+
+**Phase 1 (this session):** shipped as an opt-in aligner, same graceful-degradation
+contract as `--separation`:
+- `lyrics_fetcher/aligner/stable_ts.py` — `StableTSAligner` (name `stable-ts`):
+  ported the validated PoC algorithm (`regroup="p"`, word-timestamp flatten +
+  greedy per-line char-count assignment, whitespace-normalized) + monotonic
+  clamp. `stable_whisper` imported LAZILY inside `_load` (dev dep, like demucs);
+  any failure (missing lib / OOM / download) warns on stderr and falls back to
+  `WhisperCppAligner` — built lazily only when needed.
+- CLI: `--aligner stable-ts` on `compile`/`full`/`album` (lazy-import branch in
+  `_make_aligner`). `cross-check` intentionally unchanged (still whisper+qwen3).
+- Config: `[stable_ts]` section (`stable_ts_model`=medium, `stable_ts_lang`=ja,
+  `stable_ts_device`=cuda) in `config.py` + `config.example.toml`.
+- Deps: `stable-ts` + `openai-whisper` already in the **dev group** (`uv sync --dev`).
+- **Tests:** `tests/test_stablets.py` — 15 tests (fake-result `_line_times`
+  units: exact/whitespace/repeated-line/overshoot/exhausted; lazy-import
+  contract; load & align failure → fallback; monotonic clamp; CLI routing +
+  choices; settings resolution). Suite now **90 passed**, CI-safe without
+  stable_whisper installed. README: Stable-TS section + engine-selection +
+  config-key updates.
+
+---
+
 ## 10. Commands cheat-sheet
 
 ```bash

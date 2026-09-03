@@ -33,6 +33,15 @@ vision_model = "qwen3.5-9b"
 qwen3_aligner_model = "/mnt/fnos/storage/ai-models/qwen3-forcedaligner/model"
 qwen3_aligner_language = "Japanese"
 
+[stable_ts]
+# stable-ts forced alignment (the --aligner stable-ts option; a dev extra,
+# needs `uv sync --dev`). whisper model size used by stable_whisper.load_model
+stable_ts_model = "medium"
+stable_ts_lang = "ja"
+# torch device: "cuda" = RX 9060 XT under ROCm. Do NOT use the eGPU (device
+# index 2) — torch ROCm hangs on first compute there.
+stable_ts_device = "cuda"
+
 [output]
 lrc_by = "lyrics-fetcher"
 # default to Jellyfin layout (write .lrc next to audio) when not given on CLI
