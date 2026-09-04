@@ -125,7 +125,9 @@ class VLMOcr(BaseOCR):
             # failure message never carries anything endpoint-specific beyond URL.
             raise RuntimeError(f"vision endpoint returned HTTP {r.status_code} "
                                f"for {self._endpoint()}") from e
-        return r.json()["choices"][0]["message"]["content"]
+        # some endpoints emit content=None for refusals/filtered completions;
+        # callers expect str (cleanup().strip(), _parse_json_response)
+        return r.json()["choices"][0]["message"]["content"] or ""
 
     @staticmethod
     def _encode(image: Path) -> str:
@@ -150,22 +152,28 @@ class VLMOcr(BaseOCR):
             if hit is not None:
                 return hit
         text = self._chat(VLM_PROMPT, image=image)
-        if self.clean:
+        if self.clean and text.strip():
             try:
                 text = self.cleanup(text)
             except Exception:
                 pass  # cleanup is best-effort; keep raw transcription
-        if self.cache:
+        if self.cache and text.strip():
+            # never cache an empty reply — a null-content completion would be
+            # replayed forever (get_ocr() only tests for None)
             self.cache.put_ocr(image, text)
         return text
 
     @staticmethod
-    def _parse_json_response(text: str) -> dict:
+    def _parse_json_response(text: str | None) -> dict:
         """Robustly parse the model's JSON reply.
 
         Handles markdown code fences and trailing text — finds the first balanced
         JSON object. Returns {} on failure (caller falls back gracefully).
+        A None/empty reply (some endpoints return null content for a refusal or
+        filtered completion) is treated as a parse failure, not a crash.
         """
+        if not text:
+            return {}
         t = text.strip()
         fence = re.match(r"^```(?:json\s*)?\s*(.*?)\s*```\s*$", t, re.DOTALL)
         if fence:
