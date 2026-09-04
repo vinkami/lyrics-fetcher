@@ -3,7 +3,7 @@
 The two aligners (whisper.cpp and Qwen3-ForcedAligner) are fully independent
 timing sources. Running both on one song and comparing per-line start times
 lets the user spot lines where the automatic alignment drifts from the true
-timing (the original 黒い目 goal) and hand-fix ONLY those via ``manual``,
+timing (the original goal of this tool) and hand-fix ONLY those via ``manual``,
 instead of trusting a single engine blindly.
 
 Design notes:

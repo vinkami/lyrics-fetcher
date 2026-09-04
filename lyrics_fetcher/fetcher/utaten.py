@@ -8,7 +8,7 @@ Lyrics live in div.lyricBody. Contains span.ruby > span.rb (kanji) + span.rt (re
 DISAMBIGUATION (2026-08-28): utaten search returns many songs sharing the title.
 We parse each candidate page's real title + artist (from <title> "…歌詞 <artist> ふりがな付"
 and a.artistName) and pick the one matching the *requested* title/artist, instead of
-blindly taking the first hit (which returned the wrong アンデッド vs ASTEROID's track).
+blindly taking the first hit (which returned a same-titled song by another artist).
 """
 from __future__ import annotations
 

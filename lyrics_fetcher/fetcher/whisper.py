@@ -3,9 +3,9 @@
 When no web database has a song and there's no booklet, we transcribe the audio
 with whisper.cpp and treat the recognized text as the lyrics. This is the last
 resort — quality is lower than curated lyrics, but it fills the gap for truly
-obscure tracks (e.g. obscure maimai songs not on SilentBlue).
+obscure tracks (e.g. rhythm-game songs missing from databases).
 
-It reuses whisper.cpp (Vulkan on RX 9060 XT). The transcribed segments carry
+It reuses the whisper.cpp binary (Vulkan backend). The transcribed segments carry
 their own timestamps, so this fetcher returns lyric lines together with timing.
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ def filter_whisper_lines(segments: list[dict]) -> list[LyricLine]:
     Two pass-filters, in order:
       1. drop music-note-only / empty segments (instrumental w/ no vocals), and
       2. drop HALLUCINATION LOOPS — whisper repeating one phrase many times over
-         a song (告げよ's "メルエリアルリン" ×137, or ATLAS RUSH looping
+         a song (one 8-syllable phrase looped ×137, or looping
          "「Santus Crush」"). A real song repeats a chorus a few times; a loop is
          a phrase appearing a large number of times. If one phrase dominates the
          whole track it's a hallucination, not lyrics — treat as no lyrics.

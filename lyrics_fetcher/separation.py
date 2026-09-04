@@ -1,13 +1,15 @@
 """Vocal separation — preprocess audio to a clean vocal stem before alignment.
 
-Wraps demucs (facebookresearch, ``htdemucs``) running on the GPU/ROCm. Separating
+Wraps demucs (facebookresearch, ``htdemucs``) running on the GPU (CUDA/ROCm)
+or CPU. Separating
 out the accompaniment before whisper alignment removes BGM-driven hallucination
 and lets dense/intro timing lock onto real anchors.
 
-Measured on ASTEROID (2026-09-02): 告げよ's  intro landed at 0:27/0:30/0:33 only
-on the separated stem — raw alignment fell back to even-spread. It is an OPT-IN
+Measured on dense-BGM albums (2026-09-02): long spoken/instrumental intros
+anchor correctly only on the separated stem — raw alignment even-spreads
+them. It is an OPT-IN
 feature (``--separation``), not default, because it can shift already-good songs
-(アンデッド shifted ~10s mid-song while keeping the same anchor count).
+(a few seconds mid-song while keeping the same anchor count).
 
 demucs is imported lazily so the dependency is optional: tests / non-separating
 runs never touch it, and the model only downloads on first use (~80MB htdemucs).
