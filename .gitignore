@@ -1,3 +1,9 @@
 # Large transient/generated artifacts (not source)
 _sep_out/
-_lrc_re-ocr//_backups/
+_lrc_re-ocr/
+_backups/
+
+# secrets + machine-local config — never commit
+.env
+.env.local
+config.toml

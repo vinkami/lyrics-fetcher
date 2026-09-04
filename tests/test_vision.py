@@ -16,6 +16,28 @@ def make_ocr(chat_impl=None):
     return ocr
 
 
+# ---- endpoint resolution (base URL ending at /v1) ----
+def test_endpoint_appends_chat_completions_to_base():
+    o = VLMOcr(api="https://openrouter.ai/api/v1", model="x")
+    assert o._endpoint() == "https://openrouter.ai/api/v1/chat/completions"
+
+
+def test_endpoint_trims_trailing_slash():
+    o = VLMOcr(api="http://127.0.0.1:8081/v1/", model="x")
+    assert o._endpoint() == "http://127.0.0.1:8081/v1/chat/completions"
+
+
+def test_endpoint_full_url_back_compat():
+    full = "http://127.0.0.1:8081/v1/chat/completions"
+    assert VLMOcr(api=full, model="x")._endpoint() == full
+
+
+def test_bearer_header_only_with_key():
+    assert VLMOcr(api="http://h/v1", model="x", api_key="k")._headers() == {
+        "Authorization": "Bearer k"}
+    assert VLMOcr(api="http://h/v1", model="x", api_key="")._headers() == {}
+
+
 # ---- _parse_json_response ----
 def test_parse_plain_json():
     assert VLMOcr._parse_json_response('{"a": "b"}') == {"a": "b"}

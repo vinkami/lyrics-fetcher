@@ -19,13 +19,6 @@ from ..config import settings
 from ..models import Lyrics
 from .base import BaseAligner, TimedLine
 
-DEFAULT_BIN = settings.whisper_bin
-DEFAULT_MODEL = settings.whisper_model
-MODEL_TURBO = settings.whisper_extra_models[0] if settings.whisper_extra_models else (
-    Path.home() / "whisper.cpp" / "models" / "ggml-large-v3-turbo.bin"
-)
-
-
 class WhisperCppAligner(BaseAligner):
     name = "whisper-cpp"
 

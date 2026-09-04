@@ -13,8 +13,8 @@ CRITICAL SETUP (2026-08-28):
   is only in dev/main, not the 4.57.6 PyPI pin).
 - torch 2.11.0+rocm7.2 from the PyTorch ROCm wheel index (not PyPI).
 
-Model weights on the NAS:
-  /mnt/fnos/storage/ai-models/qwen3-forcedaligner/model
+Model weights: set ``[qwen3_aligner] qwen3_aligner_model`` in config.toml to
+your local snapshot dir (or an HF repo id; see config.example.toml).
 """
 from __future__ import annotations
 
@@ -23,8 +23,6 @@ from pathlib import Path
 from ..config import settings
 from ..models import Lyrics
 from .base import BaseAligner, TimedLine
-
-LOCAL_MODEL = settings.qwen3_aligner_model
 
 
 class Qwen3ForcedAligner(BaseAligner):
