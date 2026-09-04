@@ -38,6 +38,7 @@ lyrics-fetcher fetch "Song" --source utaten
 | `--artist` | `""` | artist for disambiguation; strongly recommended (many titles collide across artists) |
 | `--source {utaten, genius, silentblue, whisper}` | all, in order | restrict to one source. `whisper` transcribes audio — pointless here without… audio, it exists for `full`'s pipeline; here it just reports unavailable |
 | `-v`, `--verbose` | off | print the full lyric text, not just the status line |
+| `-o`, `--output` | — | write the accepted lyrics to a `.txt` file (`-` = stdout). Exactly what `compile` consumes — the fetch→compile scripting bridge. With `-o`, only a one-line `[saved]` summary prints; exit code 1 if nothing matched |
 
 **Match rule:** a source's candidate is accepted only when the fuzzy title
 *and* artist similarity pass a threshold; otherwise the next source tries.
@@ -61,6 +62,7 @@ lyrics_fetcher ocr page.jpg --engine tesseract --language jpn
 | `--model NAME` | `[vision] vision_model` | override the model name |
 | `--api-key KEY` | `VISION_API_KEY` env / `.env` | override the bearer token |
 | `--language` | `jpn+eng` | tesseract language pack spec (ignored by `vlm`) |
+| `-o`, `--output` | stdout | write the transcription to a `.txt` file instead of printing it — feed straight into `compile` |
 
 Behaviour notes: images are downscaled (longest side 1568 px, JPEG q88)
 before upload. A best-effort second pass asks the model to fix obvious
@@ -91,24 +93,31 @@ lyrics-fetcher compile song.flac "$(cat lyrics.txt)" --aligner stable-ts
 
 ## cross-check
 
-Run **whisper.cpp and Qwen3-ForcedAligner** on the same song and diff their
-per-line start times. Reports lines beyond a tolerance and lines either
-engine lacks — your triage tool for a suspicious `.lrc`.
+Run **any two or more aligners** on the same song and diff their per-line
+start times. Reports lines where the engines disagree beyond a tolerance —
+your triage tool for a suspicious `.lrc`.
 
 ```bash
-lyrics-fetcher cross-check song.flac lyrics.txt --tolerance 2.5
-lyrics-fetcher cross-check song.flac lyrics.txt -v
+lyrics-fetcher cross-check song.flac lyrics.txt                    # whisper vs qwen3 (default)
+lyrics-fetcher cross-check song.flac lyrics.txt --engines whisper stable-ts qwen3
+lyrics-fetcher cross-check song.flac lyrics.txt --tolerance 2.5 -v
 ```
 
 | option | default | meaning |
 |---|---|---|
 | `audio`, `lyrics_file` | as `compile` | |
-| `--tolerance SECONDS` | `2.5` | a line is "drifted" when \|whisper_start − qwen3_start\| exceeds this |
+| `--engines ENGINE [ENGINE ...]` | `whisper qwen3` | which aligners to run and compare: any of `whisper`, `qwen3`, `stable-ts`. Two is the classic audit; three gives spread-across-engines (a line where all three agree but sit is still `ok`; one where one engine differs is `drift` with the outlier visible per column) |
+| `--tolerance SECONDS` | `2.5` | a line drifts when its **spread** (max start − min start across engines) exceeds this |
 | `-v`, `--verbose` | off | list every line, not just drifted/missing |
 | `--binary`, `--model-whisper`, `--qwen3-model` | config | as `compile` |
 
-Runs whisper first as a subprocess so its memory frees before Qwen3 loads
-in-process. **Exit code is non-zero if anything drifted or is missing** —
+Behaviour notes: whisper runs as a subprocess **first** so its GPU memory
+frees before an in-process engine (qwen3 / stable-ts) loads. An engine
+that errors (missing model, OOM) is reported and excluded — the remaining
+engines still compare, so `--engines whisper qwen3 stable-ts` degrades to
+a 2-way diff instead of dying. Whisper always runs its lean single model
+here (no extra anchor models) so diffs measure the engines, not extra
+config. **Exit code is non-zero if anything drifted or is missing** —
 scriptable ("which of my album files need a listen?").
 
 ## full

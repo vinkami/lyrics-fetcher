@@ -137,7 +137,7 @@ That location is the default; otherwise set
 `--separation` runs **demucs** (`htdemucs`) to align against a dry-vocal
 stem — markedly better intro timing on BGM-dense songs. Installed by the
 dev group above; if it's missing, the flag warns and aligns raw audio.
-First use downloads ~1 GB of demucs model weights.
+First use downloads ~80 MB of htdemucs weights into the Hugging Face cache — relocate with `[separation] separation_model_dir` (or use `htdemucs_ft` for higher quality).
 
 ## Quick start
 

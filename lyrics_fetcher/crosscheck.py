@@ -1,17 +1,18 @@
-"""Cross-check mode — compare two alignment engines on the same song.
+"""Cross-check mode — compare ANY two-or-more alignment engines on one song.
 
-The two aligners (whisper.cpp and Qwen3-ForcedAligner) are fully independent
-timing sources. Running both on one song and comparing per-line start times
-lets the user spot lines where the automatic alignment drifts from the true
-timing (the original goal of this tool) and hand-fix ONLY those via ``manual``,
-instead of trusting a single engine blindly.
+The aligners (whisper.cpp, stable-ts, Qwen3-ForcedAligner) are independent
+timing sources. Running several on one song and comparing per-line start
+times lets the user spot lines where alignment drifts from the true timing
+and hand-fix ONLY those via ``manual``, instead of trusting one engine.
 
 Design notes:
-- Both aligners consume the SAME ``Lyrics`` and map every lyric line (by index)
-  to a ``TimedLine``, so we compare line ``i``'s ``start`` across engines.
-- ``delta`` = whisper start - qwen3 start. ``|delta| > tolerance`` => "drift".
-- If an engine returns FEWER lines than another, the missing tail lines are
-  reported as "missing" from that source rather than fabricating a delta.
+- Every aligner consumes the SAME ``Lyrics`` and maps line ``i`` (by index)
+  to a ``TimedLine``, so we diff line i's ``start`` across all engines.
+- ``delta`` = max(starts) - min(starts) across engines; ``delta > tolerance``
+  => "drift". With 2 engines this is |a-b| as before.
+- A line any engine lacks => "missing" (no fabricated delta).
+- An engine that ERRORS is reported in ``report.errors`` and excluded from
+  the diff; with 3 engines selected you still get a 2-engine comparison.
 """
 from __future__ import annotations
 
@@ -24,14 +25,22 @@ from .aligner.base import BaseAligner, TimedLine
 
 @dataclass
 class CrossCheckLine:
-    """Per-line cross-check result: both engines' starts, delta, and status."""
+    """Per-line cross-check result: every engine's start, spread, status."""
 
     text: str
-    # None => that engine produced no timing for this line (truncated output)
-    whisper_start: float | None = None
-    qwen3_start: float | None = None
+    # engine name -> start time; an absent key => that engine didn't time
+    # this line (truncated output) -> reported via `missing_from`
+    starts: dict[str, float] = field(default_factory=dict)
+    # max - min across present engines (None if <2 timed this line)
     delta: float | None = None
     status: str = "ok"  # "ok" | "drift" | "missing"
+
+    @property
+    def missing_from(self) -> list[str]:
+        """Engines that have output for this song but skipped this line."""
+        return self._missing_from or []
+
+    _missing_from: list[str] = field(default_factory=list, repr=False)
 
 
 @dataclass
@@ -40,7 +49,7 @@ class CrossCheckReport:
 
     lines: list[CrossCheckLine] = field(default_factory=list)
     tolerance: float = 2.5
-    # engine names actually run (in case one source was skipped/errored)
+    # engine names run, in call order (errored ones stay listed; see errors)
     engines: list[str] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
 
@@ -87,28 +96,30 @@ def run_cross_check(
         report.lines = [CrossCheckLine(l.text, status="missing") for l in lyrics.lines]
         return report
 
-    # Canonical pairing with known engine names ("whisper" / "qwen3"). If the
-    # caller named engines differently, fall back to first-two positional.
-    wname = "whisper" if "whisper" in ok else ok[0]
-    qname = "qwen3" if "qwen3" in ok else next((n for n in ok if n != wname), None)
-
+    # Spread across engines: line drifts when max(start) - min(start) > tol.
+    # With the classic 2 engines this equals |whisper - qwen3| as before.
+    # An engine whose whole run errored is absent from `outputs` -> it is
+    # listed per-line in missing_from only if at least one engine timed the
+    # line; engines with no successful output at all don't mark lines missing.
     for i, l in enumerate(lyrics.lines):
-        ws = _get_start(outputs[wname], i)
-        qs = _get_start(outputs[qname], i) if qname else None
-        if ws is None or qs is None:
+        starts: dict[str, float] = {}
+        for name in ok:
+            t = _get_start(outputs[name], i)
+            if t is not None:
+                starts[name] = t
+        vals = list(starts.values())
+        if len(vals) < len(ok):
+            # some engine(s) ran successfully but stopped before this line
             status = "missing"
             delta = None
+            missing_from = [n for n in ok if n not in starts]
         else:
-            delta = ws - qs
-            status = "drift" if abs(delta) > tolerance else "ok"
+            delta = (max(vals) - min(vals)) if len(vals) >= 2 else None
+            status = "drift" if delta is not None and delta > tolerance else "ok"
+            missing_from = []
         report.lines.append(
-            CrossCheckLine(
-                text=l.text,
-                whisper_start=ws,
-                qwen3_start=qs,
-                delta=delta,
-                status=status,
-            )
+            CrossCheckLine(text=l.text, starts=starts, delta=delta,
+                           status=status, _missing_from=missing_from)
         )
     return report
 
@@ -128,21 +139,24 @@ def format_report(report: CrossCheckReport, verbose: bool = False) -> str:
     """Render a cross-check report as human-readable text."""
     out: list[str] = []
     engines = " vs ".join(report.engines) or "n/a"
-    out.append(f"Cross-check: {engines} (tolerance |Δ| > {report.tolerance:.1f}s)")
+    out.append(f"Cross-check: {engines} (tolerance spread > {report.tolerance:.1f}s)")
 
     if report.errors:
         for name, err in report.errors.items():
             out.append(f"  [error] {name}: {err}")
-            out.append(f"  [error] {name} produced no timing — lines 'missing'")
+            out.append(f"  [error] {name} excluded from the diff")
 
     shown = [l for l in report.lines if l.status != "ok"] if not verbose else report.lines
+    width = max((len(n) for n in report.engines), default=6) + 1
     for l in shown:
         tag = {"drift": "DRIFT", "missing": "MISSING", "ok": ""}[l.status]
-        delta = f"Δ={l.delta:+6.1f}s" if l.delta is not None else f"Δ=    --"
-        out.append(
-            f"  {l.text!r:<40} whisper={_fmt(l.whisper_start)} "
-            f"qwen3={_fmt(l.qwen3_start)} {delta:>10} {tag}"
+        delta = f"spread={l.delta:5.1f}s" if l.delta is not None else "spread=   --"
+        cols = " ".join(
+            f"{n + '=':<{width}}{_fmt(l.starts.get(n))}" for n in report.engines
+            if n not in report.errors
         )
+        extra = f" missing:{','.join(l.missing_from)}" if l.missing_from else ""
+        out.append(f"  {l.text!r:<40} {cols} {delta}{extra} {tag}")
     if not shown:
         out.append("  (no drifted lines)")
 

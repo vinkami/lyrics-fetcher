@@ -56,6 +56,18 @@ stable_ts_lang = "ja"
 # present as cuda). "cpu" works but is slow; "cuda:1" picks another card.
 stable_ts_device = "cuda"
 
+[separation]
+# demucs model + weight location for the --separation flag (dev extra).
+# model names: htdemucs (default), htdemucs_ft, htdemucs_6s, mdx_extra, ...
+separation_model = "htdemucs"
+# Where the ~80 MB weights download to on first use / where to load them
+# from. Unset = the default Hugging Face cache (~/.cache/huggingface/hub).
+# Point at a roomier disk to relocate, or pre-download a LocalRepo folder
+# (files named <sig>.th + <name>.yaml) and set this to load offline.
+#separation_model_dir = "/data/models/demucs"
+# compute device: "auto" (GPU if torch sees one, else CPU), or "cpu"/"cuda"
+separation_device = "auto"
+
 [output]
 lrc_by = "lyrics-fetcher"
 # default to Jellyfin layout (write .lrc next to audio) when not given on CLI

@@ -12,7 +12,8 @@ feature (``--separation``), not default, because it can shift already-good songs
 (a few seconds mid-song while keeping the same anchor count).
 
 demucs is imported lazily so the dependency is optional: tests / non-separating
-runs never touch it, and the model only downloads on first use (~80MB htdemucs).
+runs never touch it, and the model only downloads on first use (~80 MB htdemucs,
+into the huggingface cache — relocatable via [separation] separation_model_dir).
 """
 from __future__ import annotations
 
@@ -26,8 +27,12 @@ class VocalSeparator:
 
     name = "demucs"
 
-    def __init__(self, device: str | None = None):
+    def __init__(self, device: str | None = None, model: str | None = None,
+                 model_dir: Path | str | None = None):
+        # None => config layer decides (settings.*), "auto" => torch probe
         self._device = device
+        self._model = model
+        self._model_dir = Path(model_dir) if model_dir else None
         self._sep = None
 
     def _get(self):
@@ -36,8 +41,34 @@ class VocalSeparator:
 
             import demucs.api
 
-            device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
-            self._sep = demucs.api.Separator(model="htdemucs", device=device)
+            device = self._device or settings.separation_device
+            if device == "auto":
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            model = self._model or settings.separation_model
+            # Model weights download on first use (~80 MB htdemucs) via
+            # huggingface_hub. Direct that cache to [separation].
+            # separation_model_dir when configured (HF reads the env var at
+            # import time inside its lazy downloader), else demucs' repo=
+            # LocalRepo for a manually fetched folder.
+            mdir = self._model_dir or settings.separation_model_dir
+            kwargs = {}
+            if mdir is not None:
+                mdir = Path(mdir).expanduser()
+                if (mdir / "bin").exists() or any(mdir.glob("*.th")):
+                    # already a demucs LocalRepo layout -> use it directly
+                    kwargs["repo"] = mdir
+                else:
+                    mdir.mkdir(parents=True, exist_ok=True)
+                    import os
+                    os.environ["HF_HUB_CACHE"] = str(mdir)
+                    # if huggingface_hub was already imported, its constants
+                    # captured the env at import time — rewrite them too
+                    try:
+                        import huggingface_hub.constants as _hfc
+                        _hfc.HF_HUB_CACHE = str(mdir)
+                    except ImportError:
+                        pass
+            self._sep = demucs.api.Separator(model=model, device=device, **kwargs)
         return self._sep
 
     def separate(self, audio: Path, out_dir: Path | None = None) -> Path:
@@ -56,13 +87,14 @@ class VocalSeparator:
         return target
 
 
-def make_separator(device: str | None = None) -> VocalSeparator | None:
+def make_separator(device: str | None = None, model: str | None = None,
+                   model_dir: Path | str | None = None) -> VocalSeparator | None:
     """Construct a separator, or None if the optional demucs dep is missing.
 
     Used so ``--separation`` degrades gracefully when demucs isn't installed
     instead of crashing the whole command.
     """
     try:
-        return VocalSeparator(device=device)
+        return VocalSeparator(device=device, model=model, model_dir=model_dir)
     except ImportError:
         return None
