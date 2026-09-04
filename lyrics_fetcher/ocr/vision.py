@@ -1,17 +1,17 @@
 """Vision LLM OCR via any OpenAI-compatible chat-completions endpoint.
 
-Works with a local llama-server (default: Qwen3.5-9B on the RX 9060 XT /
-eGPU) OR a cloud vision model (OpenAI, OpenRouter, Groq, ...). Point it
-elsewhere via config — the OpenAI-compatible *base URL* (ending at /v1) +
-model name in the [vision] section, the API key via VISION_API_KEY in a
-gitignored .env (see config.load_env_file):
+Works with any OpenAI-compatible chat-completions endpoint that accepts
+images — cloud providers (OpenAI, OpenRouter, Groq, ...) or a self-hosted
+server (llama.cpp, vLLM, Ollama). Configure the *base URL* (ending at /v1)
++ model name in the [vision] section; the API key goes in VISION_API_KEY
+(gitignored .env or exported env var — see config.load_env_file):
 
     [vision]
     vision_api = "https://openrouter.ai/api/v1"   # /chat/completions is
     vision_model = "some-vision-model"            # appended by the code
 
 The endpoint must accept image_url content parts (base64 data URLs are sent;
-cloud providers with request-size caps get images downscaled to MAX_SIDE).
+images are downscaled to MAX_SIDE first, so request-size caps rarely bite).
 """
 from __future__ import annotations
 

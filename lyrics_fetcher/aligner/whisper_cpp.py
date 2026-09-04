@@ -1,7 +1,8 @@
 """whisper.cpp aligner — line-level timestamps via GPU transcription + DTW.
 
-Whisper runs on Vulkan (RX 9060 XT); the medium multilingual model is the most
-accurate for synthetic vocals (better than large-v3-turbo/small, verified).
+Whisper runs wherever whisper.cpp's Vulkan backend runs (AMD and NVIDIA).
+The medium multilingual model is the most accurate for synthetic vocals
+(verified against small and large-v3-turbo).
 
 Known lyrics are AUTHORITATIVE for the text; whisper only supplies TIMESTAMPS.
 Monotonic DP fits the lyric lines to whisper segments such that line n maps to a
@@ -33,7 +34,7 @@ class WhisperCppAligner(BaseAligner):
         self.max_len = max_len if max_len is not None else settings.whisper_max_len
         self.device = device if device is not None else settings.whisper_device
         # additional whisper models to ALSO transcribe with, useful when the
-        # primary model hallucinates on a hard song (e.g. 告げよ). Their segments
+        # primary model hallucinates on a hard song. Their segments
         # join the same anchor pool so the best match per line wins.
         if extra_models is None:
             self.extra_models = list(settings.whisper_extra_models)
@@ -131,7 +132,7 @@ class WhisperCppAligner(BaseAligner):
 
         Same monotonic DP as ``_align``, but only lines whose best similarity
         exceeds ``min_score`` are treated as reliable TIME ANCHORS. This fixes
-        the failure mode where whisper hallucinates (e.g. 告げよ looped garbage):
+        the failure mode where whisper hallucinates (one phrase looped for minutes):
         there, no line scores high, so we produce no anchors and fall back to
         an even spread in ``align``.
 

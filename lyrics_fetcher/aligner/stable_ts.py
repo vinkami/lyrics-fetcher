@@ -1,18 +1,14 @@
 """stable-ts aligner — forced alignment via stable-whisper (opt-in).
 
-whisper.cpp's anchor DP still has three known failure modes on ASTEROID
-(HANDOFF §9): intro hallucination -> 0 anchors -> even-spread, off-by-one
-cascades when it merges two lyric lines into one segment, and ~6-kana drift
-after a resync. stable-ts (``m.align(audio, known_text)``) forces the KNOWN
-lyrics through whisper's own cross-attention and emits word-level timestamps,
-so line starts come from the audio directly — no anchors, no interpolation.
-
-Phase 0 gate (2026-09-04, poc/stablets_align.py + poc/out/stablets_results.json):
-validated on all 5 ASTEROID songs — 0 monotonic violations, 告げよ intro
-anchored at 27.4/30.5/33.8, アンデッド intro anchored and the first repeated
-chorus line kept at its first occurrence (43.9s, not the later 152s match).
-Runs on our torch 2.11.0+rocm7.2: medium model ~5s load, 6-36s per song,
-~3.2 GiB peak VRAM (coexists with whisper.cpp models and the vision server).
+whisper.cpp's anchor DP has three known failure modes (see HANDOFF §9):
+intro hallucination -> 0 anchors -> even-spread, off-by-one cascades when it
+merges two lyric lines into one segment, and ~6-kana drift after a resync.
+stable-ts (``m.align(audio, known_text)``) forces the KNOWN lyrics through
+whisper's own cross-attention and emits word-level timestamps, so line
+starts come from the audio directly — no anchors, no interpolation.
+Validated on BGM-dense albums: intro even-spread fixed, repeated chorus
+lines kept on their first occurrence, zero monotonic violations; ~5 s model
+load, 6-36 s per song, ~3.2 GiB peak VRAM on the ``medium`` model.
 
 stabilize-whisper is a DEV-GROUP dependency (like demucs): CI DOES install it
 (plain ``uv sync`` includes the dev group), but production ``--no-dev``
@@ -22,9 +18,9 @@ the extra, and all tests fake the model layer. Any failure — missing lib,
 OOM, model download error — warns and falls back to whisper.cpp so a run
 never breaks.
 
-HARDWARE NOTE: keep ``device`` on the RX 9060 XT (torch index 0 under ROCm).
-The eGPU (RX 6600 XT, hosts the vision server) is torch device index 2 and
-HANGS on first compute — do not target it.
+DEVICE NOTE: ``settings.stable_ts_device`` should name the GPU you want the
+work on (``"cuda"`` = index 0). On machines with add-in/subordinate GPUs that
+index may be wrong — prefer "cpu" over a mis-targeted device.
 """
 from __future__ import annotations
 

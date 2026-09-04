@@ -52,8 +52,8 @@ qwen3_aligner_language = "Japanese"
 # needs `uv sync --dev`). whisper model size used by stable_whisper.load_model
 stable_ts_model = "medium"
 stable_ts_lang = "ja"
-# torch device: "cuda" works on NVIDIA and AMD (ROCm). On multi-GPU AMD
-# boxes, "cuda" = index 0; avoid routing compute to an eGPU (hangs here).
+# torch device: "cuda" = your primary GPU (NVIDIA or AMD/ROCm — both
+# present as cuda). "cpu" works but is slow; "cuda:1" picks another card.
 stable_ts_device = "cuda"
 
 [output]

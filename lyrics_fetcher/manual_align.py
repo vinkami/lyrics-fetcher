@@ -4,7 +4,7 @@ Plays the audio (ffplay, headless) and you press RETURN each time a new lyric
 line begins; the tool records wall-clock elapsed time relative to the moment
 playback started and assigns each line its start timestamp. Writes a .lrc.
 
-This is the fallback for songs that defeat automatic alignment (e.g. 告げよ),
+This is the fallback for songs that defeat automatic alignment
 letting you provide the line start times by ear.
 
 Usage:

@@ -72,7 +72,7 @@ class Settings:
     # --- stable-ts (opt-in forced alignment, --aligner stable-ts) ---
     stable_ts_model: str = "medium"
     stable_ts_lang: str = "ja"
-    stable_ts_device: str = "cuda"  # RX 9060 XT under ROCm; the eGPU HANGS
+    stable_ts_device: str = "cuda"  # primary GPU (CUDA or ROCm); "cpu" also works
 
     # --- output ---
     lrc_by: str = "lyrics-fetcher"

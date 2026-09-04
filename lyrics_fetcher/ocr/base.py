@@ -21,12 +21,12 @@ class BaseOCR(ABC):
     def fetch(self, image: Path, title: str = "", artist: str = "") -> Lyrics:
         """OCR an image and wrap it as Lyrics.
 
-        A leading bracketed title header (e.g. ``[命を振り回せ]``) printed on
+        A leading bracketed title header (e.g. ``[Song Title]``) printed on
         the page is treated as a header, not a lyric line, and dropped.
         """
         text = self.ocr(image).strip()
         lines = [l for l in (x.strip() for x in text.splitlines()) if l]
-        # drop a leading header line like [命を振り回せ] or a bare 4-6 char title
+        # drop a leading header line like [Song Title] or a bare 4-6 char title
         if len(lines) > 1:
             first = lines[0]
             if first.startswith("[") and first.endswith("]"):

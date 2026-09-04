@@ -1,7 +1,7 @@
 """faster-whisper aligner — native Python alignment (alternative to whisper.cpp).
 
 faster-whisper uses CTranslate2. On this machine whisper.cpp (Vulkan) is the
-preferred backend for the RX 9060 XT; this class is a CPU/other-backend
+preferred backend here (Vulkan builds for AMD/NVIDIA); this class is a CPU/other-backend
 fallback and for first-line segments. It runs faster-whisper directly and maps
 its segment timestamps monotonically to the known lyrics.
 """

@@ -3,7 +3,7 @@
 Qwen3-ForcedAligner-0.6B is a non-autoregressive LLM timestamp predictor that
 aligns known (audio, text) pairs. Unlike whisper it uses your reference lyrics
 as ground truth (no recognition/hallucination step) — the right tool for songs
-whisper can't transcribe (e.g. 告げよ) and as an independent timing cross-check.
+whisper can't transcribe, and as an independent timing cross-check.
 
 CRITICAL SETUP (2026-08-28):
 - Load via transformers-native `AutoModelForTokenClassification` + `AutoProcessor`,
@@ -11,7 +11,7 @@ CRITICAL SETUP (2026-08-28):
   `Qwen3ASRForConditionalGeneration` and OOMs; the checkpoint is really 918M).
 - This requires transformers built from git main (the `qwen3_asr` architecture
   is only in dev/main, not the 4.57.6 PyPI pin).
-- torch 2.11.0+rocm7.2 from the PyTorch ROCm wheel index (not PyPI).
+- torch from the wheel index configured in pyproject.toml (ROCm or CUDA).
 
 Model weights: set ``[qwen3_aligner] qwen3_aligner_model`` in config.toml to
 your local snapshot dir (or an HF repo id; see config.example.toml).

@@ -7,3 +7,7 @@ _backups/
 .env
 .env.local
 config.toml
+
+# Python
+__pycache__/
+*.pyc
