@@ -492,8 +492,11 @@ verify line counts against the printed page** (or crop columns per shot).
   the global frozen tail (デ/ッド 2.9s stall in the full run) contaminates
   neighbours but a slice can't inherit it.
 
-ASTEROID status: **user-approved all 5 songs** (round-3 fixes pending their
-final nod on the one moved line). `_backups/` prune still owed after that.
+ASTEROID status: ✅ **CLOSED 2026-09-04 — user approved all 5 songs after
+round 3.** `_backups/` pruned. This album is the reference deployment for
+`album --jellyfin --aligner stable-ts --separation` + cloud OCR + 4 listen-fix
+rounds; its workflow (deploy → listen → surgical cherry-pick fixes with
+backups) is the pattern for manosaba.
 
 **Open:** (a) manosaba album run (one photo per song; verify line counts).
 
