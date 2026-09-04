@@ -43,7 +43,11 @@ lyrics-fetcher fetch "Song" --source utaten
 **Match rule:** a source's candidate is accepted only when the fuzzy title
 *and* artist similarity pass a threshold; otherwise the next source tries.
 This is why a bare title can return "not found" even when Genius has a
-page — same title, different artist.
+page — same title, different artist. Disc titles ending in a version
+marker (`"Song (Long ver.)"`, `"Song Short ver"`) are also retried with
+the marker stripped, since lyrics DBs index the bare song title —
+instrumental/karaoke/language versions are deliberately exempt (their
+audio doesn't match the original lyrics).
 
 ## ocr
 

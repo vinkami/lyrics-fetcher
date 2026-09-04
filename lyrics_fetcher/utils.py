@@ -46,6 +46,75 @@ def norm_for_search(title: str) -> str:
     return re.sub(r"^\d+\s+", "", title).strip()
 
 
+#: trailing version/arrangement markers a pressing adds to a song title
+#: (e.g. "8番出口 Short ver", "Edelweiss (Long ver.)",
+#: "アマツキツネ (10th Anniversary ver.)"). Lyrics databases index the
+#: *bare* song title, so searches with these suffixes miss.
+_VERSION_WORDS = (
+    r"ver(?:sion)?|mix|short|full|long|extended|radio(?:\s*edit)?|edit"
+    r"|album|single|instrumental|inst|karaoke|movie|tv|size|extra"
+    r"|remaster(?:ed)?|anniversary|edition"
+    r"|off[\s-]*vocal|vocal[\s-]*off|\d+\s*分耐久|[+\-]\d*\s*key"
+)
+#: never strip: language versions genuinely have different lyric text,
+#: piano arrangements have no vocals — resurrecting the vocal song's lyrics
+#: for them would align wrong text to the audio
+_UNSTRIPPABLE_RE = re.compile(
+    r"english|japanese|\beng\b|\bjp\b|日本語|英語|piano",
+    re.IGNORECASE,
+)
+#: trailing parenthetical holding a version marker: "(Long ver.)", "(Full)",
+#: "(10th Anniversary ver.)", "(+1key)", "（日本語 ver）"
+_PAREN_SUFFIX_RE = re.compile(
+    rf"\s*[（(](?![^（）()]*{_UNSTRIPPABLE_RE.pattern})[^（）()]*"
+    rf"(?:{_VERSION_WORDS})[^（）()]*[）)]\s*$",
+    re.IGNORECASE,
+)
+#: trailing bare marker(s) outside parens: "Short ver", "Inst", "ver",
+#: "30分耐久ver". (?<!\w) stops "Deliver"->"Deli" style mutilation; a marker
+#: glued to a word (e.g. 鏡音レンver) is left alone — it may be meaningful.
+_BARE_SUFFIX_RE = re.compile(
+    rf"(?:\s|-)*(?<!\w)(?:{_VERSION_WORDS})(?:\s*[-\.]?\s*(?:ver(?:sion)?))?\.?\s*$",
+    re.IGNORECASE,
+)
+#: titles that ARE instrumental/karaoke versions — their "lyrics" would be
+#: the original song's text against music with no vocals. Never suggest a
+#: variant for them; they should not match a lyrics page at all.
+_INSTRUMENTAL_RE = re.compile(
+    rf"\b(?:inst(?:rumental)?|karaoke|off[\s-]*vocal|vocal[\s-]*off)\b"
+    rf"|BGM|サウンドトラック",
+    re.IGNORECASE,
+)
+
+
+def title_variants(title: str) -> list[str]:
+    """Candidate search titles for a disc track title, best first.
+
+    Strips trailing version/arrangement markers iteratively (parentheticals
+    first, then bare words):
+      '8番出口 Short ver(+1key)' -> ['8番出口 Short ver(+1key)',
+                                     '8番出口 Short ver', '8番出口']
+    Stops when nothing more strips or the core is < 2 chars; drops dupes.
+    The input title is always the first candidate. Instrumental/karaoke
+    titles get NO variants: they have no lyrics and must stay that way.
+    """
+    title = title.strip()
+    out = [title]
+    if not title or _INSTRUMENTAL_RE.search(title):
+        return out
+    cur = title
+    while True:
+        stripped = _PAREN_SUFFIX_RE.sub("", cur).strip()
+        if stripped == cur:
+            stripped = _BARE_SUFFIX_RE.sub("", cur).strip()
+        if (stripped == cur or len(stripped) < 2 or stripped in out
+                or _INSTRUMENTAL_RE.search(stripped)):
+            break
+        out.append(stripped)
+        cur = stripped
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Song matching / verification
 # ---------------------------------------------------------------------------

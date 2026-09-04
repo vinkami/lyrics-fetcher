@@ -92,3 +92,36 @@ def test_slugify_safe_for_spaces_and_jp():
     s = slugify("01 アンデッド")
     # keeps JP chars, safe on filesystems
     assert "/" not in s and "\\" not in s
+
+# ---- title_variants ----
+def test_variants_bare_title_unchanged():
+    from lyrics_fetcher.utils import title_variants
+    assert title_variants("天ノ弱") == ["天ノ弱"]
+
+
+def test_variants_strips_version_suffixes():
+    from lyrics_fetcher.utils import title_variants
+    assert title_variants("8番出口 Short ver") == ["8番出口 Short ver", "8番出口"]
+    assert title_variants("Edelweiss (Long ver.)") == ["Edelweiss (Long ver.)", "Edelweiss"]
+    assert title_variants("アマツキツネ (10th Anniversary ver.)") == [
+        "アマツキツネ (10th Anniversary ver.)", "アマツキツネ"]
+    assert title_variants("8番出口 Short ver(+1key)") == [
+        "8番出口 Short ver(+1key)", "8番出口 Short ver", "8番出口"]
+    assert title_variants("8番出口 30分耐久ver") == ["8番出口 30分耐久ver", "8番出口"]
+
+
+def test_variants_never_strip_to_instrumental_core():
+    from lyrics_fetcher.utils import title_variants
+    # instrumental versions have NO lyrics — variants must not resurrect the
+    # vocal song's page against them
+    assert title_variants("8番出口 Inst(Full ver)") == ["8番出口 Inst(Full ver)"]
+    assert title_variants("征け Instrumental") == ["征け Instrumental"]
+    assert title_variants("ポジティブシンキング (Instrumental)") == [
+        "ポジティブシンキング (Instrumental)"]
+
+
+def test_variants_keep_meaningful_parentheticals():
+    from lyrics_fetcher.utils import title_variants
+    # not a version marker -> untouched (romanization hint etc.)
+    assert title_variants("andante -アンダンテ-") == ["andante -アンダンテ-"]
+    assert title_variants("Bad ∞ End ∞ Night") == ["Bad ∞ End ∞ Night"]
