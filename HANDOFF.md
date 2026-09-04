@@ -31,6 +31,8 @@ structured replies, no fluff. Prefers bullet points, facts, honest
 
 | Commit | PR | What |
 |--------|-----|------|
+| `694ab29` | #20 | **title variants** (version-suffix strip → web-fetch retry) + **negative-cache poisoning fix** |
+| `467fa95` | #19 | vision `content=None` guard (null reply degrades, never crashes album batch / poisons OCR cache) |
 | `b106b7f` | #14 | **cross-check `--engines`** (any of whisper/qwen3/stable-ts, N-way spread), **`fetch`/`ocr` `-o`**, **`[separation]`** config (model/dir/device) |
 | `b8b6d21` | #13 | **Public-facing docs**: README rewritten for users (no author hardware), `docs/CLI.md` + `docs/CONFIG.md` full references, docstrings generalized |
 | `318f67f` | #12 | **Vision = any OpenAI-compatible endpoint**: `[vision]` base URL ends at `/v1` (code appends `/chat/completions`), API key via `VISION_API_KEY` in gitignored `.env` (dotenv), env-var config layer, portability sweep (dead globals, machine paths, `--api/--model` shadowing bug) |
@@ -45,8 +47,8 @@ structured replies, no fluff. Prefers bullet points, facts, honest
 | `e27986d` | #2 | CI workflow (`.github/workflows/ci.yml`) + lockfile + tests |
 | `dfd2352` | #1 | The full working project (fetch/align/output + README) |
 
-Working tree is clean, on `main`, synced with `origin/main`. **Test suite now 116** (`uv run pytest -q`, no GPU/network needed).
-Deploy state: **ASTEROID fully deployed with `--aligner stable-ts --separation` + cloud OCR**, after two listen-fix rounds (see §9e). Awaiting user's round-3 review.
+Working tree is clean, on `main`, synced with `origin/main`. **Test suite now 127** (`uv run pytest -q`, no GPU/network needed).
+Deploy state: **ASTEROID CLOSED** (§9e); **VOCALOID 超BEST -memories- 19/19** + **EO 8番出口 4/4 vocal** deployed web-fetch + stable-ts (§9f); kagamination2 partial 8/32 (remainder genuinely absent from all DBs).
 
 **Branching strategy now active:**
 - `main` = stable trunk, only receives squash-merged PRs
@@ -235,15 +237,19 @@ blocks `setpci`); not worth re-debugging unless the user asks.
   Qwen3-ForcedAligner on a song; report lines where their timestamps diverge, so
   the user can spot drifting lines (their original 黒い目 drift goal) and
   hand-fix only those. Command: `cross-check song.flac lyrics.txt --tolerance 2.5`.
-- **B — process the manosaba (魔法少女ノ魔女裁判) album:** PENDING — now that
-  stable-ts + cloud OCR are shipped this is `album --jellyfin --aligner stable-ts
-  --separation` with **one booklet photo per song** (mitigates §6.12). First
-  quick test worth running: re-OCR the two-column photo
-  `.../ASTEROID/booklet/20260902_004842.jpg` via the cloud endpoint (`ocr -o`)
-  and diff vs the 52-line ground truth in `out/fix/` — gates manosaba's OCR trust.
-- **C — ASTEROID round-3 listen review (user):** after §9e's fixes —
-  命を振り回せ 2:58 transition, サテライト シューメイカー line, 黒い目 何だか.
-  If clean → prune `_backups/` copies.
+- **B — process the manosaba (魔法少女ノ魔女裁判) album:** PENDING on photos —
+  when available: `album --jellyfin --aligner stable-ts --separation` with
+  **one booklet photo per song** (mitigates §6.12). NOTE the 2-column cloud
+  test FAILED (§9e) — the gate for trusting 2-col pages no longer exists;
+  single-song photos + line-count verification is the rule.
+- **B2 — more web-fetchable albums (no photos needed):** COOL&CREATE
+  とうほう☆みくれいむ (genius hits), maimai FESTIVAL (silentblue partial),
+  re-check PRiSM's 3 missing (negative-cache fix may flip them). Amatsu
+  Kitsune partially (silentblue). See §9f survey.
+- **C — ~~ASTEROID round-3 listen review~~ ✅ DONE — ASTEROID CLOSED (§9e),
+  user approved all 5 songs; backups pruned. Open listen question instead:
+  EO 8番出口 lrc tail overruns for Short/耐久 variants (§9f lesson) — needs
+  the user's ears/judgement on whether to trim per pressing.**
 - **D — maybe promote stable-ts:** only if manosaba's first listen is clean on
   first pass; local config.toml can pre-set jellyfin_default. Repo default stays
   whisper for portability until then.
@@ -281,7 +287,9 @@ moment (エスオーエス, のじゃロリック, RE-INCARNATED, RondeauX, Cryp
 Ref-rain, Flashback — their good content came from web fetch in a prior run).
 The VLM page-split is also nondeterministic, so OCR-attached tracks vary too.
 **No data loss** (an existing `.lrc` is never clobbered by a failed fetch), but
-"re-run and hope." Not yet fixed.
+"re-run and hope." **Root cause found + fixed 2026-09-04 (§9f bug 3, PR #20):
+negative caching** — a transient miss was cached and replayed as a hit forever;
+the "flip to skipped" was stale poison, not live Cloudflare state.
 
 **Open options discussed (user hasn't picked yet):** (a) add an explicit
 `--no-overwrite` guard so a run *guarantees* it never deletes/overwrites an
@@ -499,6 +507,50 @@ rounds; its workflow (deploy → listen → surgical cherry-pick fixes with
 backups) is the pattern for manosaba.
 
 **Open:** (a) manosaba album run (one photo per song; verify line counts).
+
+---
+## 9f. Session log — 2026-09-04 (cont. b): memories + EO deploy sweep, 3 real bugs fixed
+
+User had no manosaba photos → pivoted to web-fetchable albums across the NAS.
+
+**Library survey (fetch probes):** web-likely: memories (proven), EO 8番出口,
+COOL&CREATE (genius), kagamination2 (mixed); NOT web-likely: せきこみごはん,
+のぼる↑, FESTIVAL (2/6), 手書き booklet still needed for most アマツキツネ.
+
+**Deployed:** `-memories-` 19/19 (14 utaten / 1 genius / 4 ocr-vlm from the
+old 4-photo booklet; 0 monotonic violations; NOTE tracks 01-04 came from OCR
+because album-mode web fetch ran BEFORE the #20 fix existed — worth re-running
+--web-first later if utaten's versions are preferred for furigana).
+EO 8番出口 4/4 vocal (utaten; Inst x2 skip by design; レンver skips — DB lacks it).
+kagamination2 8/32 — the other 24 are genuinely absent from utaten/genius/
+silentblue (obscure; verified post-#20 by hand-probing misses).
+
+**Bugs found & fixed (all regression-tested):**
+1. **#19** — cloud vision `content=None` crashed the whole album batch
+   (`_parse_json_response(None)`); None/'' now degrades, empty OCR never cached.
+2. **#20** — disc titles with version suffixes (`Short ver`, `(Long ver.)`,
+   `30分耐久ver`, `(+1key)`) missed EVERY web source → `title_variants()`
+   iterative strip + per-variant retry. Deliberately NOT stripped: Inst/
+   karaoke/off-vocal (no vocals to align!), language versions, piano versions.
+   Found because EO skipped 7/7.
+3. **#20** — **negative caching poisoned**: `fetch_best` cached empty Lyrics
+   and replayed them as hits forever — the real cause of the ちほー3
+   "re-run and hope" instability (§9). Negatives no longer written; legacy
+   empty rows ignored on read.
+
+**Deploy-side lesson (not yet a bug):** for a song with ONE studio recording
+released in length-variants (8番出口), the SAME 116-line text aligned to
+Short(74s)/30分耐久(1818s) necessarily overruns/freeze-clusters at audio end —
+it's not an aligner failure, it's a lyrics-content mismatch for the pressing.
+Acceptable for karaoke-ish loops? User to judge by ear; alternative = trim
+repeated blocks for Short/loop versions by hand (poc/apply_review_fixes pattern).
+
+**Local git hygiene:** `out/` and `poc/out/*` were untracked-but-not-ignored;
+`git add -A` swept ~30 booklet-derived lyric files into PR #20 pre-push.
+Removed via `git rm --cached` + amend + force-with-lease; both paths now
+gitignored (`/poc/out/*` keeps `stablets_results.json` un-excluded). **NEVER
+`git add -A` without checking `git status` first** — lyric text from ripped
+CDs must not enter the public repo.
 
 ---
 
