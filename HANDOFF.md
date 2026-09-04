@@ -482,8 +482,20 @@ lines** — left-column blocks only, truncated mid-page (worse than local Qwen3.
 verify line counts against the printed page** (or crop columns per shot).
 `out/fix/02_cloud_2col.txt` kept as evidence.
 
-**Open:** (a) user round-3 listen review of the §9e fixes; (b) manosaba album
-run (under the one-photo-per-song rule above).
+**User listen round 3 — 命を振り回せ only (2 items), others PERFECT:**
+- text: 留守番してんの→**居留守してんの**, 闇魔帳→**閻魔帳** (booklet; my
+  transcription slips — applied to .lrc + .html + out/fix ground truth).
+- 尊大ぶった閻魔帳 entered late: stem-run said 61.92 with only 0.28s until the
+  next line. Region-sliced stable-ts align on the RAW flac (`poc/mynagi_region.py`:
+  52–70s slice, regroup=False, per-char word starts) → sung at **60.50**;
+  deployed that. Lesson: for a single suspicious line, align a sliced region —
+  the global frozen tail (デ/ッド 2.9s stall in the full run) contaminates
+  neighbours but a slice can't inherit it.
+
+ASTEROID status: **user-approved all 5 songs** (round-3 fixes pending their
+final nod on the one moved line). `_backups/` prune still owed after that.
+
+**Open:** (a) manosaba album run (one photo per song; verify line counts).
 
 ---
 
