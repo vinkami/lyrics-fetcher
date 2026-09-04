@@ -475,9 +475,15 @@ specifics swept from code + public files into this HANDOFF.
 
 **Suite: 116 passing.** Merged #9–#14 all CI green.
 
-**Open:** (a) user round-3 listen review of the §9e fixes; (b) 2-column test
-for the cloud model on photo 004842 (gates manosaba OCR trust); (c) manosaba
-album run.
+**Follow-up (same day) — 2-column cloud test RESULT: FAILED.** `ocr` on photo
+004842 (命を振り回せ, two columns) via cloud qwen3.8-flash returned **19/52
+lines** — left-column blocks only, truncated mid-page (worse than local Qwen3.5's
+38). The two-column gap persists → **manosaba rule: one photo per song, and
+verify line counts against the printed page** (or crop columns per shot).
+`out/fix/02_cloud_2col.txt` kept as evidence.
+
+**Open:** (a) user round-3 listen review of the §9e fixes; (b) manosaba album
+run (under the one-photo-per-song rule above).
 
 ---
 
