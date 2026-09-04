@@ -11,3 +11,9 @@ config.toml
 # Python
 __pycache__/
 *.pyc
+vendor/
+
+# local working artifacts (album outputs, probes)
+/out/
+/poc/out/*
+!/poc/out/stablets_results.json
