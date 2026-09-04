@@ -58,6 +58,19 @@ def test_parse_invalid_returns_empty():
     assert VLMOcr._parse_json_response("no json here") == {}
 
 
+def test_parse_none_and_empty_return_empty():
+    # some endpoints return null/empty content (refusal, filtered completion);
+    # the album batch must degrade, not crash (real bug: 2026-09-04 memories run)
+    assert VLMOcr._parse_json_response(None) == {}
+    assert VLMOcr._parse_json_response("") == {}
+
+
+def test_extract_songs_null_reply_degrades(monkeypatch):
+    ocr = make_ocr()
+    ocr._chat = lambda prompt, image=None, max_tokens=2048: None
+    assert ocr.extract_songs(Path("page.jpg"), known_titles=["A"]) == {}
+
+
 # ---- _normalize_song_labels ----
 def test_normalize_matches_canonical_title():
     songs = {"プリズム△▽リズム（Long ver.）": "a line"}
@@ -132,3 +145,19 @@ def test_fetch_returns_empty_when_no_song_matches():
     ocr._chat = lambda *a, **k: '{"songs": {"Other Song": "x"}}'
     lyr = ocr.fetch(Path("page.jpg"), "Target")
     assert not lyr.lines
+
+# ---- ocr(): empty VLM reply must not poison the cache ----
+def test_ocr_empty_reply_not_cached(monkeypatch):
+    calls = {"put": 0, "get": 0}
+    class FakeCache:
+        def get_ocr(self, p):
+            calls["get"] += 1
+            return None
+        def put_ocr(self, p, t):
+            calls["put"] += 1
+    ocr = VLMOcr(api="http://localhost:1/v1/chat/completions", model="fake",
+                 cache=FakeCache(), clean=False)
+    ocr._chat = lambda prompt, image=None, max_tokens=2048: ""
+    import pathlib
+    assert ocr.ocr(pathlib.Path("page.jpg")) == ""
+    assert calls["put"] == 0  # empty reply never cached
