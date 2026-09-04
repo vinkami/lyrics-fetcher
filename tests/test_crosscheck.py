@@ -56,11 +56,12 @@ def test_identical_timings_all_ok():
 
 
 def test_drift_detected_when_exceeds_tolerance():
-    # line 1: whisper 20s vs qwen3 28s => delta -8, over 2.5 => drift
+    # line 1: whisper 20s vs qwen3 28s => spread 8, over 2.5 => drift
     r = _run([10.0, 20.0, 30.0], [10.0, 28.0, 30.0], tolerance=2.5)
     assert r.drifted == 1
     assert [l.status for l in r.lines] == ["ok", "drift", "ok"]
-    assert r.lines[1].delta == -8.0
+    assert r.lines[1].delta == 8.0  # spread is unsigned
+    assert r.lines[1].starts == {"whisper": 20.0, "qwen3": 28.0}
 
 
 def test_drift_respects_tolerance_boundary():
@@ -77,7 +78,8 @@ def test_shorter_engine_yields_missing_lines():
     r = _run([10.0, 20.0, 30.0], [10.0, 20.0], lines=["a", "b", "c"])
     assert r.missing == 1
     assert r.lines[2].status == "missing"
-    assert r.lines[2].qwen3_start is None
+    assert "qwen3" not in r.lines[2].starts
+    assert r.lines[2].missing_from == ["qwen3"]
     assert r.lines[2].delta is None
     # the timed lines still compare fine
     assert r.lines[0].status == "ok"
@@ -158,13 +160,57 @@ def test_format_report_no_drift_collapsed_without_verbose():
     assert "(no drifted lines)" in s
 
 
-def test_delta_sign_convention_whisper_minus_qwen():
-    # delta > 0 => whisper start is LATER than qwen3
+def test_delta_is_unsigned_spread_either_direction():
+    # spread = max - min, independent of engine order
     r = _run([25.0], [20.0], lines=["x"])
     assert r.lines[0].delta == 5.0
-    # delta < 0 => whisper is EARLIER
     r2 = _run([20.0], [25.0], lines=["x"])
-    assert r2.lines[0].delta == -5.0
+    assert r2.lines[0].delta == 5.0
+
+
+# ---- multi-engine (the point of --engines) ----
+def test_three_engine_spread_flags_worst_pair():
+    lines = ["a", "b"]
+    engines = [
+        ("whisper", FakeAligner("whisper", [10.0, 20.0])),
+        ("qwen3", FakeAligner("qwen3", [11.0, 20.5])),
+        ("stable-ts", FakeAligner("stable-ts", [10.5, 35.0])),
+    ]
+    r = run_cross_check(engines, Path("x.flac"), _lyrics(lines), 2.5)
+    assert r.engines == ["whisper", "qwen3", "stable-ts"]
+    # line 0: spread 10..11 = 1.0 ok; line 1: 20..35 = 15 => drift
+    assert [l.status for l in r.lines] == ["ok", "drift"]
+    assert r.lines[1].delta == 15.0
+    assert r.lines[1].starts == {"whisper": 20.0, "qwen3": 20.5, "stable-ts": 35.0}
+
+
+def test_third_engine_error_still_compares_the_other_two():
+    class Boom(FakeAligner):
+        def align(self, audio, lyrics):
+            raise RuntimeError("model OOM")
+
+    engines = [
+        ("whisper", FakeAligner("whisper", [10.0, 20.0])),
+        ("stable-ts", FakeAligner("stable-ts", [10.2, 30.0])),
+        ("qwen3", Boom("qwen3", [])),
+    ]
+    r = run_cross_check(engines, Path("x.flac"), _lyrics(["a", "b"]), 2.5)
+    assert "qwen3" in r.errors
+    assert r.drifted == 1               # whisper vs stable-ts still diffed
+    assert r.lines[1].starts == {"whisper": 20.0, "stable-ts": 30.0}
+    assert r.missing == 0               # errored engine doesn't mark missing
+
+
+def test_format_report_shows_all_engine_columns():
+    lines = ["a"]
+    engines = [
+        ("whisper", FakeAligner("whisper", [10.0])),
+        ("stable-ts", FakeAligner("stable-ts", [20.0])),
+    ]
+    r = run_cross_check(engines, Path("x.flac"), _lyrics(lines), 2.5)
+    s = format_report(r)
+    assert "whisper vs stable-ts" in s
+    assert "whisper=" in s and "stable-ts=" in s and "spread=" in s
 
 
 # ---- CLI wiring (no GPU: aligner classes replaced with fakes) ----
@@ -245,3 +291,56 @@ def test_crosscheck_cli_exit_zero_when_agree(monkeypatch, capsys, tmp_path):
     assert rc == 0
     out = capsys.readouterr().out
     assert "(no drifted lines)" in out
+
+def test_crosscheck_cli_engines_selection(monkeypatch, capsys, tmp_path):
+    """--engines whisper stable-ts runs exactly those two builders."""
+    from lyrics_fetcher import cli
+
+    ran = []
+
+    class FakeAligner2(BaseAligner):
+        def __init__(self, engine, *a, **k):
+            self.engine = engine
+            self.name = engine
+
+        def align(self, audio, lyrics):
+            ran.append(self.name)
+            step = 10.0 if self.name == "whisper" else 10.5
+            return [TimedLine(l.text, step + i) for i, l in enumerate(lyrics.lines)]
+
+    monkeypatch.setattr(
+        "lyrics_fetcher.aligner.whisper_cpp.WhisperCppAligner",
+        lambda *a, **k: FakeAligner2("whisper"))
+    monkeypatch.setattr(
+        "lyrics_fetcher.aligner.stable_ts.StableTSAligner",
+        lambda *a, **k: FakeAligner2("stable-ts"))
+
+    lyr = tmp_path / "lyrics.txt"
+    lyr.write_text("a\nb\n", encoding="utf-8")
+    rc = cli.main(["cross-check", "song.flac", str(lyr),
+                   "--engines", "whisper", "stable-ts"])
+    out = capsys.readouterr().out
+    assert sorted(ran) == ["stable-ts", "whisper"]
+    assert "qwen3" not in "".join(ran)
+    assert "whisper vs stable-ts" in out
+    assert rc == 0  # spreads of 0.5 within tolerance
+
+
+def test_crosscheck_cli_single_engine_errors_early(monkeypatch, capsys, tmp_path):
+    # run_cross_check needs >=2 successful engines; a lone engine must still
+    # produce a (all-missing) report with non-zero exit, not crash
+    from lyrics_fetcher import cli
+
+    class FakeW(BaseAligner):
+        name = "whisper"
+        def __init__(self, *a, **k):
+            pass
+        def align(self, audio, lyrics):
+            return [TimedLine(l.text, 5.0) for l in lyrics.lines]
+
+    monkeypatch.setattr(
+        "lyrics_fetcher.aligner.whisper_cpp.WhisperCppAligner", FakeW)
+    lyr = tmp_path / "l.txt"
+    lyr.write_text("a\n", encoding="utf-8")
+    rc = cli.main(["cross-check", "song.flac", str(lyr), "--engines", "whisper"])
+    assert rc == 1

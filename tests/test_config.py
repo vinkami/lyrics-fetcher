@@ -149,3 +149,18 @@ def test_vlmocr_resolves_key_from_config(monkeypatch):
     # local default: no key -> no Authorization header at all
     load(_write_config(""))
     assert VLMOcr().api_key == ""
+
+
+# ---- [separation] section ----
+def test_separation_section_parses():
+    load(_write_config(
+        "[separation]\nseparation_model = 'htdemucs_ft'\n"
+        "separation_model_dir = '/data/demucs'\nseparation_device = 'cpu'\n"))
+    assert settings.separation_model == "htdemucs_ft"
+    assert str(settings.separation_model_dir) == "/data/demucs"
+    assert settings.separation_device == "cpu"
+
+
+def test_separation_model_dir_default_is_none():
+    load(_write_config(""))
+    assert settings.separation_model_dir is None

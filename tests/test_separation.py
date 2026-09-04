@@ -14,7 +14,7 @@ def test_make_separator_returns_none_when_demucs_absent(monkeypatch):
     """If demucs can't be imported, --separation degrades to None (no crash)."""
     import lyrics_fetcher.separation as sep
 
-    def boom(device=None):
+    def boom(device=None, model=None, model_dir=None):
         raise ImportError("no demucs")
 
     monkeypatch.setattr(sep, "VocalSeparator", boom)

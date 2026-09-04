@@ -32,6 +32,7 @@ SECTION_MAP = {
     "vision": ["vision_api", "vision_model", "vision_api_key"],
     "qwen3_aligner": ["qwen3_aligner_model", "qwen3_aligner_language"],
     "stable_ts": ["stable_ts_model", "stable_ts_lang", "stable_ts_device"],
+    "separation": ["separation_model", "separation_model_dir", "separation_device"],
     "output": ["lrc_by", "jellyfin_default", "write_html_default"],
     "tuning": ["anchor_min_score", "request_timeout"],
 }
@@ -73,6 +74,15 @@ class Settings:
     stable_ts_model: str = "medium"
     stable_ts_lang: str = "ja"
     stable_ts_device: str = "cuda"  # primary GPU (CUDA or ROCm); "cpu" also works
+
+    # --- vocal separation (demucs, --separation) ---
+    separation_model: str = "htdemucs"
+    # Where demucs model weights live / download to (None = the default
+    # huggingface cache, ~/.cache/huggingface/hub). Set to keep weights on
+    # a roomier disk; a shared dir avoids re-downloading per project copy.
+    separation_model_dir: Path | None = None
+    # "auto" = cuda if available else cpu
+    separation_device: str = "auto"
 
     # --- output ---
     lrc_by: str = "lyrics-fetcher"
@@ -217,6 +227,9 @@ def _apply_overrides(s: Settings, overrides: dict) -> Settings:
 def _coerce(s: Settings, attr: str, v):
     """Convert a TOML/CLI value to the dataclass field type."""
     default = s.__dataclass_fields__[attr].default
+    if default is None and attr.endswith("_dir"):
+        # optional Path field (None = provider default location)
+        return Path(str(v).strip("'")) if v not in (None, "", "none") else None
     if isinstance(default, Path):
         if isinstance(v, list):
             return [Path(x.strip("'\"") + "") for x in v] if v else []

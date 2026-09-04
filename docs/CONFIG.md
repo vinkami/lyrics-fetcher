@@ -105,6 +105,14 @@ The dev group must be installed (`uv sync` includes it). At runtime any
 failure — lib missing, OOM, download blocked — prints a warning and the
 line falls through to the whisper engine. One-way door: none.
 
+## `[separation]` — `--separation` (demucs)
+
+| key | default | CLI | meaning |
+|---|---|---|---|
+| `separation_model` | `htdemucs` | — | demucs model name: `htdemucs` (4-stem, fast — recommended), `htdemucs_ft` (fine-tuned, slower/better), `htdemucs_6s`, `mdx_extra`, … See `demucs --list-models`. First use downloads the weights |
+| `separation_model_dir` | unset = `~/.cache/huggingface/hub` | — | Where the ~80 MB weights download to / load from. Point at a roomier disk to relocate the cache, or pre-download a demucs **LocalRepo** folder (files `<sig>.th` + `<name>.yaml`, e.g. from `https://dl.fbaipublicfiles.com/demucs/`) and set this to run fully offline. Auto-detected: an existing dir containing `.th` files is used as a repo directly; otherwise the dir receives the HF download |
+| `separation_device` | `auto` | — | `auto` = GPU when torch sees one (CUDA or ROCm), else CPU; or force `cpu` / `cuda` / `cuda:1` |
+
 ## `[output]`
 
 | key | default | CLI | meaning |

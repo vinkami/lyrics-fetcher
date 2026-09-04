@@ -28,13 +28,17 @@ from .manual_align import _cmd_manual
 from .config import load, settings
 
 
-def _make_whisper_aligner(args, default_extra_turbo: bool = False) -> WhisperCppAligner:
+def _make_whisper_aligner(args, default_extra_turbo: bool = False,
+                          no_extra: bool = False) -> "WhisperCppAligner":
     """Resolve --binary/--model-whisper/--extra-model into a WhisperCppAligner
     (single source of truth: used by the default branch AND as the stable-ts
     fallback, so those flags reach the fallback when it engages)."""
+    from .aligner.whisper_cpp import WhisperCppAligner  # late: mockable, no cost
     binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
     model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
     extra = tuple(Path(x) for x in (getattr(args, "extra_model", None) or ())) if getattr(args, "extra_model", None) else None
+    if no_extra:  # cross-check: single lean model for clean comparison
+        return WhisperCppAligner(binary=binary, model=model, extra_models=())
     if default_extra_turbo and (getattr(args, "extra_model", None) is None):
         return WhisperCppAligner(binary=binary, model=model, extra_models=None)
     return WhisperCppAligner(binary=binary, model=model, extra_models=extra)
@@ -92,6 +96,19 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         orch = FetchOrchestrator()
         results = orch.fetch_all(args.title, args.artist)
 
+    winner = next((r for r in results.values()
+                   if isinstance(r, Lyrics) and r), None)
+    if args.output:
+        if winner is None:
+            print("no source matched — nothing written", file=sys.stderr)
+            return 1
+        text = winner.text()
+        if args.output == "-":
+            print(text)
+        else:
+            Path(args.output).write_text(text + "\n", encoding="utf-8")
+            print(f"[saved] {len(winner.lines)} lines -> {args.output}")
+        return 0
     for name, res in results.items():
         if isinstance(res, Lyrics) and res:
             print(f"[{name}] found ({len(res.lines)} lines)" + (f"  {res.source_url}" if res.source_url else ""))
@@ -109,10 +126,15 @@ def _cmd_ocr(args: argparse.Namespace) -> int:
     ocr_engine = (VLMOcr(api=args.api, model=args.model, api_key=args.api_key)
                   if args.engine == "vlm" else TesseractOcr(lang=args.language))
     try:
-        print(ocr_engine.ocr(path))
+        text = ocr_engine.ocr(path)
     except Exception as e:
         print(f"OCR failed: {e}", file=sys.stderr)
         return 1
+    if args.output:
+        Path(args.output).write_text(text + "\n", encoding="utf-8")
+        print(f"[saved] {len(text.splitlines())} lines -> {args.output}")
+    else:
+        print(text)
     return 0
 
 
@@ -215,9 +237,7 @@ def _cmd_album(args: argparse.Namespace) -> int:
 
 
 def _cmd_crosscheck(args: argparse.Namespace) -> int:
-    """Run both aligners on a song and report lines where timings diverge."""
-    from .aligner.whisper_cpp import WhisperCppAligner
-    from .aligner.qwen3_forced_aligner import Qwen3ForcedAligner
+    """Run the chosen aligners on a song and report lines they disagree on."""
     from .crosscheck import run_cross_check, format_report
     from .models import LyricLine
 
@@ -237,16 +257,22 @@ def _cmd_crosscheck(args: argparse.Namespace) -> int:
     lyrics = Lyrics(source="text", title=args.title or audio.stem, artist=args.artist or "")
     lyrics.lines = [LyricLine(t) for t in lyric_lines]
 
-    binary = Path(args.binary) if getattr(args, "binary", None) else settings.whisper_bin
-    model = Path(args.model_whisper) if getattr(args, "model_whisper", None) else settings.whisper_model
-    qm = Path(args.qwen3_model) if getattr(args, "qwen3_model", None) else None
-    # whisper runs as a SEPARATE subprocess (frees its GPU memory on exit) so it
-    # must run BEFORE qwen3 loads (in-process, needs its own VRAM) to keep both
-    # from being resident on the 16GB card at once.
-    engines = [
-        ("whisper", WhisperCppAligner(binary=binary, model=model, extra_models=())),
-        ("qwen3", Qwen3ForcedAligner(model_dir=qm)),
-    ]
+    names = args.engines or ["whisper", "qwen3"]  # classic default pairing
+    def _qwen3():
+        from .aligner.qwen3_forced_aligner import Qwen3ForcedAligner
+        return Qwen3ForcedAligner(
+            model_dir=Path(args.qwen3_model) if args.qwen3_model else None)
+
+    def _stable():
+        from .aligner.stable_ts import StableTSAligner
+        return StableTSAligner(fallback=_make_whisper_aligner(args))
+
+    builders = {
+        "whisper": lambda: _make_whisper_aligner(args, no_extra=True),
+        "qwen3": _qwen3,
+        "stable-ts": _stable,
+    }
+    engines = [(n, builders[n]()) for n in names]
     report = run_cross_check(engines, audio, lyrics, tolerance=args.tolerance)
     print(format_report(report, verbose=args.verbose))
     # non-zero exit when anything needs attention so scripts can react
@@ -264,6 +290,9 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--source", choices=list(SOURCE_FACTORY), default=None,
                     help="Use only this source")
     pf.add_argument("-v", "--verbose", action="store_true", help="Print full lyrics")
+    pf.add_argument("-o", "--output", default=None,
+                    help="write the accepted lyrics text to this .txt file "
+                         "(use '-' for stdout; default: status lines only)")
     pf.add_argument("--config", default=None, help="path to a config TOML file")
     pf.set_defaults(func=_cmd_fetch)
 
@@ -274,6 +303,9 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument("--model", default=None, help="vision model name (default: [vision] config)")
     po.add_argument("--api-key", default=None, help="bearer token (default: VISION_API_KEY env)")
     po.add_argument("--language", default="jpn+eng")
+    po.add_argument("-o", "--output", default=None,
+                    help="write transcription to this .txt file "
+                         "(default: stdout; keeps -v-style raw output too)")
     po.add_argument("--config", default=None, help="path to a config TOML file")
     po.set_defaults(func=_cmd_ocr)
 
@@ -298,8 +330,13 @@ def build_parser() -> argparse.ArgumentParser:
     px.add_argument("audio")
     px.add_argument("lyrics_file", nargs="?", default=None,
                     help="path to a lyrics .txt/.lrc, or literal text")
+    px.add_argument("--engines", nargs="+", choices=["whisper", "qwen3", "stable-ts"],
+                    default=None, metavar="ENGINE",
+                    help="aligners to compare, 2+ recommended "
+                         "(default: whisper qwen3)")
     px.add_argument("--tolerance", type=float, default=2.5,
-                    help="|seconds| above which two timings count as drifted (default 2.5)")
+                    help="spread (max-min seconds) above which a line counts as "
+                         "drifted (default 2.5)")
     px.add_argument("--title", default="")
     px.add_argument("--artist", default="")
     px.add_argument("--binary", default=None, help="path to whisper-cli")
