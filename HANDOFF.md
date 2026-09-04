@@ -31,6 +31,13 @@ structured replies, no fluff. Prefers bullet points, facts, honest
 
 | Commit | PR | What |
 |--------|-----|------|
+| `b106b7f` | #14 | **cross-check `--engines`** (any of whisper/qwen3/stable-ts, N-way spread), **`fetch`/`ocr` `-o`**, **`[separation]`** config (model/dir/device) |
+| `b8b6d21` | #13 | **Public-facing docs**: README rewritten for users (no author hardware), `docs/CLI.md` + `docs/CONFIG.md` full references, docstrings generalized |
+| `318f67f` | #12 | **Vision = any OpenAI-compatible endpoint**: `[vision]` base URL ends at `/v1` (code appends `/chat/completions`), API key via `VISION_API_KEY` in gitignored `.env` (dotenv), env-var config layer, portability sweep (dead globals, machine paths, `--api/--model` shadowing bug) |
+| `1d88bfa` | #11 | gitignore `/_backups/` (deploy safety copies) |
+| `7d15816` | #9 | **stable-ts aligner** `--aligner stable-ts` (Phase 0 gate GO; 2-stage review; auto-fallback to whisper.cpp) |
+| `2424f54` | #8 | vocal separation `--separation` (demucs htdemucs) |
+| `da792c6` | #7 | docs: HANDOFF ちほー3 results |
 | `c0b9f7c` | #6 | **Reject title-only OCR blocks** — index/worldview pages of the booklet aren't lyrics |
 | `33b6101` | #5 | **Multi-song booklet OCR** + skip no-lyrics by default |
 | `ca8554b` | #4 | **`cross-check` mode** — compare whisper vs Qwen3 timings `--tolerance` |
@@ -38,9 +45,8 @@ structured replies, no fluff. Prefers bullet points, facts, honest
 | `e27986d` | #2 | CI workflow (`.github/workflows/ci.yml`) + lockfile + tests |
 | `dfd2352` | #1 | The full working project (fetch/align/output + README) |
 
-Working tree is clean, on `main`, synced with `origin/main`. **22+ commits of
-prior work were on a stale `feature/poc-scripts` branch that we merged & deleted
-in PR #1.**
+Working tree is clean, on `main`, synced with `origin/main`. **Test suite now 116** (`uv run pytest -q`, no GPU/network needed).
+Deploy state: **ASTEROID fully deployed with `--aligner stable-ts --separation` + cloud OCR**, after two listen-fix rounds (see §9e). Awaiting user's round-3 review.
 
 **Branching strategy now active:**
 - `main` = stable trunk, only receives squash-merged PRs
@@ -89,10 +95,21 @@ the config file, `config.py` defaults / `config.example.toml`).
   - binary `~/whisper.cpp/build/bin/whisper-cli` (built `-DGGML_VULKAN=ON` for RDNA4)
   - models: `~/whisper.cpp/models/ggml-medium.bin` (primary),
     `ggml-large-v3-turbo.bin` (extra, merged as anchors in `album` mode)
-- **Qwen vision model** (booklet OCR) on the **NAS**: `/mnt/fnos/storage/ai-models/qwen3.5-9b/`
-  - `Qwen3.5-9B-Q4_K_M.gguf` (~5.7 GB) + `mmproj-BF16.gguf` (~0.9 GB, REQUIRED for vision)
-  - served by **llama-server on port 8081** (user's `~/AI/start-vision` + `~/AI/vision-config.ini`).
-    User's `~/AI/start` and `~/AI/config.ini` are for the 27B model — **do not modify** them; make your own.
+- **Vision OCR is now CLOUD** (since 2026-09-04): OpenRouter `qwen/qwen3.8-flash`,
+  base URL in gitignored `config.toml` `[vision]` (ends at `/v1`; code appends
+  `/chat/completions`), key in `.env` `VISION_API_KEY` (both gitignored — NEVER
+  commit them). The local llama-server path still exists as fallback:
+  `~/AI/start-vision qwen3.5-9b` serves `/mnt/fnos/storage/ai-models/qwen3.5-9b/`
+  GGUFs (Q4_K_M + mmproj) on **port 8081** — currently STOPPED, eGPU idle.
+  User's `~/AI/start` + `~/AI/config.ini` are the 27B model — do not modify.
+- **Local machine config lives in `config.toml` + `.env` at repo root** (both
+  gitignored). Repo ships only `config.example.toml`. Precedence:
+  CLI > env/`.env` > TOML > defaults. `[separation] separation_model_dir`
+  can relocate demucs weights; currently unset (default HF cache).
+- **demucs weights** (first `--separation` use, ~80 MB): via huggingface_hub
+  → `~/.cache/huggingface/hub/models--adefossez--HTDemucs/` (safetensors;
+  the legacy dl.fbaipublicfiles `.th` path only applies when
+  `separation_model_dir` points at a pre-downloaded LocalRepo folder).
 - **Qwen3-ForcedAligner** (optional aligner) on NAS: `/mnt/fnos/storage/ai-models/qwen3-forcedaligner/model/`
   - (Qwen/Qwen3-ForcedAligner-0.6B, ~918M params, 1.8GB safetensors)
 - **NAS music library**: `/mnt/fnos/storage/Music/` (FNOS upload)
@@ -109,11 +126,12 @@ blocks `setpci`); not worth re-debugging unless the user asks.
 
 ## 5. GPU / VRAM juggling (critical know-how)
 
-- Qwen vision model (llama-server:8081) resident uses **~7.6 GB** VRAM.
-  whisper `medium` (~2.5 GB) coexists — verified both run at once.
+- **OCR is cloud now (2026-09-04)** → zero local VRAM for vision; llama-server
+  (if restarted: `~/AI/start-vision qwen3.5-9b`, kills: `pkill -f vision-config.ini`)
+  uses ~7.6 GB and coexists with whisper `medium` (~2.5 GB) — verified.
 - Qwen3-ForcedAligner needs its own VRAM; **don't load it while the vision server
-  is resident on a 16 GB card** — OOMs. (Kill vision server with `pkill -9 -f "vision-config.ini"`
-  first.)
+  is resident on a 16 GB card** — OOMs. stable-ts `medium` peaks **3.2 GiB** and
+  coexists with whisper.cpp models fine.
 - `whisper.cpp` runs on **Vulkan** (not ROCm) — that's the whole reason the
   eGPU idea surfaced; it was abandoned. Vulkan works cleanly on the 9060 XT.
 
@@ -157,6 +175,34 @@ blocks `setpci`); not worth re-debugging unless the user asks.
     the printed title (e.g. an index page listing QUIQ/Edelweiss/Bloody Trail).
     `BookletMapper._is_title_only_block()` drops blocks (≤2 lines) whose cleaned
     text matches their own title/header → reported as unmatched, not invented lyrics.
+11. **Booklet is ground truth; whisper agreement is NOT** (round-2 lesson, §9e):
+    I "corrected" まーいっか→まぁいいか and シューメイカー→シューゲイザー because
+    whisper + my own vision read agreed — both were WRONG against the print. The
+    deployed user-reviewed text wins until the booklet itself disproves it. Also:
+    the booklet font drops thin horizontal strokes (ゲイ↔メイ↔ガイ confusable) —
+    expect glyph-level OCR slips that only a human/better-model read fixes.
+12. **Two-column booklet pages defeat VLM OCR non-deterministically** — the local
+    Qwen3.5 dropped 命を振り回せ's ENTIRE right column (14 lines, twice,
+    deterministically). Workarounds: photograph ONE song per page shot (worked —
+    the 5-shot ASTEROID re-do), crop columns, or hand-transcribe via a strong
+    multimodal read + whisper cross-check (what recovered the 52 lines, §9e).
+    The cloud model (qwen3.8-flash) read the シューゲイザー region correctly in
+    a targeted zoom test, but a full two-column-page test is still pending.
+13. **Alignment residual failures are mostly STEM artifacts, not the aligner**:
+    demucs doubled-vocal stems cause frozen clusters (告げよ first chorus, 3 lines
+    sharing 75.x) and false repeat matches (黒い目 情熱的にさ→100s at the break);
+    aligning the RAW flac fixed both (stable-ts on raw: 71.9/73.3 + 120.0/126.8).
+    Recipe when a section looks frozen/false-matched: re-`compile` that song on
+    the raw flac with stable-ts, cherry-pick the fixed lines, keep the rest.
+14. **Secrets & config hygiene**: keys live in gitignored `.env` (`VISION_API_KEY`),
+    machine paths in gitignored `config.toml` (repo ships `config.example.toml`);
+    `vision_api_key` is `field(repr=False)`; OCR HTTP errors sanitized to
+    status+URL only. argparse defaults must be None or they SILENTLY shadow the
+    config file (the `--api/--model` bug caught in the sweep).
+15. **Deploy safety**: always `_backups/<album>_<date>_<label>/` + sha256 manifest
+    before overwriting `.lrc/.html` on the NAS (gitignored). Surgical listen-fixes
+    via `poc/apply_review_fixes*.py` pattern: edit both `.lrc` AND the HTML block,
+    verify monotonicity + only-intended-lines-changed programmatically.
 
 ---
 
@@ -173,10 +219,11 @@ blocks `setpci`); not worth re-debugging unless the user asks.
   - Audio file is **clean** (decodes fine, normal levels) — the failure is acoustic
     (dense BGM + vocals with unclear phoneme anchors), not bad data.
   - This is why `manual` (tap-a-key) mode exists.
-- Minor OCR slips occasionally (dropped morphemes like 一/の). A post-OCR
-  cleanup pass (Qwen re-reads) fixes grammar-detectable ones (思うは→思うのは) but
-  NOT grammatically-valid single-character drops (欠片 vs 一欠片) — those need
-  higher-res transcription.
+- **Two-column OCR drops** (see §6.12) — open gap; cloud-model behavior untested
+  on a full 2-col page.
+- Minor OCR slips occasionally (dropped morphemes like 一/の) and glyph confusions
+  (ゲイ/メイ/ガイ — §6.11). The post-OCR cleanup pass fixes grammar-detectable
+  ones but NOT valid-looking single-char/glyph slips — those need a listen check.
 - **告げよ title header** can leak as a fake lyric line in `full` mode (the
   `album` path strips it; `ocr/base.fetch` now also strips leading `[title]`).
 
@@ -188,9 +235,18 @@ blocks `setpci`); not worth re-debugging unless the user asks.
   Qwen3-ForcedAligner on a song; report lines where their timestamps diverge, so
   the user can spot drifting lines (their original 黒い目 drift goal) and
   hand-fix only those. Command: `cross-check song.flac lyrics.txt --tolerance 2.5`.
-- **B — process the maimai prism / manosaba albums:** ✅ **STARTED — maimai
-  ベストアルバムちほー3 run in progress (first full run done; see §10).** The
-  manosaba (魔法少女ノ魔女裁判) album is still pending.
+- **B — process the manosaba (魔法少女ノ魔女裁判) album:** PENDING — now that
+  stable-ts + cloud OCR are shipped this is `album --jellyfin --aligner stable-ts
+  --separation` with **one booklet photo per song** (mitigates §6.12). First
+  quick test worth running: re-OCR the two-column photo
+  `.../ASTEROID/booklet/20260902_004842.jpg` via the cloud endpoint (`ocr -o`)
+  and diff vs the 52-line ground truth in `out/fix/` — gates manosaba's OCR trust.
+- **C — ASTEROID round-3 listen review (user):** after §9e's fixes —
+  命を振り回せ 2:58 transition, サテライト シューメイカー line, 黒い目 何だか.
+  If clean → prune `_backups/` copies.
+- **D — maybe promote stable-ts:** only if manosaba's first listen is clean on
+  first pass; local config.toml can pre-set jellyfin_default. Repo default stays
+  whisper for portability until then.
 
 Other ideas we brainstormed (lower priority): furigana for non-utaten sources
 (janome/kytea), coverage reporting (flag AI-guessed vs curated lyrics), "smart
@@ -356,7 +412,7 @@ contract as `--separation`:
   parity, frozen-tail coverage guard, empty/punct-only line hold-previous;
   lazy-import contract; load & align failure → fallback; monotonic clamp; CLI
   routing + fallback flag passthrough; settings resolution). Suite now
-  **99 passed**; the tests are pure logic, so CI passes on a runner with no
+  **99 passed then; 116 now**; the tests are pure logic, so CI passes on a runner with no
   GPU or model download (CI does install the dev group). README: Stable-TS
   section + engine-selection + config-key updates.
 - **2-stage subagent review findings that shaped the final code:** the
@@ -376,19 +432,71 @@ contract as `--separation`:
 
 ---
 
+## 9e. Session log — 2026-09-04 (cont.): ASTEROID deploy + 2 listen-fix rounds + cloud OCR + public docs
+
+**Deploy:** `album <ASTEROID> --jellyfin --aligner stable-ts --separation` — 5/5
+tracks from ocr-vlm (fresh one-per-song booklet photos), 0 fallbacks. Pre-deploy
+backup: `_backups/ASTEROID_2026-09-04_pre-stablets/` (+sha256, gitignored via #11).
+
+**User listen round 1 (4 defects) → `poc/apply_review_fixes.py`:**
+- サテライト: text シューゲイザー (per user; see round-2 correction),
+- 告げよ first-chorus frozen cluster + 黒い目 break false-match: BOTH fixed by
+  re-`compile` on the RAW flac with stable-ts (stem doubled vocals caused them;
+  §6.13), cherry-picked into the deployed files.
+- 命を振り回せ: VLM had dropped the entire right booklet column (again). Recovery:
+  agent-vision full transcription of the photo (52 lines) cross-checked line-by-
+  line against whisper-medium on the raw flac, merged with the user-reviewed text
+  refinements → full re-align. `out/fix/02 命を振り回せ_full52.txt` is the
+  ground truth; 諦観 tail (2:58+) preserved from the user-corrected version.
+
+**User listen round 2 (over-corrections!) → `poc/apply_review_fixes2.py`:**
+- **まーいっか is the booklet text** (my whisper-iz→まぁいいか reverted),
+- **first サテライト word IS シューメイカー** (booklet reads メ; round-1's
+  ゲイザー there was my over-fix — only the 俯いたまま line is シューゲイザー),
+- 黒い目 虚しくて line: 何だか not 何か (booklet),
+- ヒーローだってさいなら was frozen-dup at 青春時代's 182.92 → whisper-anchored
+  180.0 (the 諦観 4.6s stall was that dup, not a real gap).
+→ §6.11 lesson banked.
+
+**Vision to cloud (PR #12):** user wired OpenRouter `qwen/qwen3.8-flash` —
+implemented base-URL `/v1` + code-appended `/chat/completions`, `.env`/
+VISION_API_KEY via python-dotenv (repr=False, sanitized HTTP errors), env-layer
+precedence, `--api-key`; fixed argparse defaults shadowing config; local
+llama-server stopped (eGPU idle). Live-verified: photo OCR = 30.7s wall/0.9s CPU,
+cloud reads シューメイカー + シューゲイザー correctly on that page.
+
+**Public docs (PR #13):** README rewritten user-facing; `docs/CLI.md` +
+`docs/CONFIG.md` written (per-flag/per-key tables); all author hardware/album
+specifics swept from code + public files into this HANDOFF.
+
+**Usability (PR #14):** `cross-check --engines` (any subset, N-way spread),
+`fetch`/`ocr -o`, `[separation] separation_model/_model_dir/_device`
+(HF-cache redirect verified by real download+separate into /tmp).
+
+**Suite: 116 passing.** Merged #9–#14 all CI green.
+
+**Open:** (a) user round-3 listen review of the §9e fixes; (b) 2-column test
+for the cloud model on photo 004842 (gates manosaba OCR trust); (c) manosaba
+album run.
+
+---
+
 ## 10. Commands cheat-sheet
 
 ```bash
 # local dev
 cd ~/Code/lyrics-fetcher
 uv sync --index-strategy unsafe-best-match   # ROCm torch + git-main transformers
-uv run pytest -q                              # 72 tests
+uv run pytest -q                              # 116 tests
 uv run lyrics-fetcher --help
 
-# typical use
-uv run lyrics-fetcher full "/mnt/fnos/storage/Music/光収容の倉庫 ASTEROID/01 アンデッド.flac" \
-    --image ".../booklet/20260828_060250.jpg" --jellyfin --aligner whisper
-uv run lyrics-fetcher album "/mnt/fnos/storage/Music/光収容の倉庫 ASTEROID" --jellyfin
+# typical use (current best setup)
+uv run lyrics-fetcher album "/mnt/fnos/storage/Music/光収容の倉庫 ASTEROID" \
+    --jellyfin --aligner stable-ts --separation
+uv run lyrics-fetcher full song.flac --image booklet.jpg --jellyfin --aligner stable-ts --separation
+uv run lyrics-fetcher compile song.flac lyrics.txt --aligner stable-ts -o out.lrc
+uv run lyrics-fetcher cross-check song.flac lyrics.txt --engines whisper stable-ts
+uv run lyrics-fetcher ocr booklet.jpg -o lyrics.txt
 uv run lyrics-fetcher manual song.flac lyrics.txt -o out.lrc
 uv run lyrics-fetcher cross-check song.flac lyrics.txt --tolerance 2.5
 
