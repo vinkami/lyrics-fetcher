@@ -124,7 +124,3 @@ def slugify(title: str) -> str:
 
 def quote_via(title: str) -> str:
     return quote(title, safe="")
-
-
-MUSIC_DIR = Path("/mnt/fnos/storage/Music")
-AI_DIR = Path.home() / "AI"

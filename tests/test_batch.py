@@ -6,7 +6,6 @@ no GPU.
 from pathlib import Path
 
 from lyrics_fetcher.batch import BookletMapper
-from lyrics_fetcher.utils import MUSIC_DIR
 
 
 class FakeOcr:

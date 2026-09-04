@@ -1,8 +1,24 @@
 """Tests for the config module — loading, precedence, and type coercion."""
+import os
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from lyrics_fetcher.config import Settings, load, settings
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    """Isolate config tests from the developer's real environment.
+
+    load() now applies an env-var layer, and load_env_file() may pick up a
+    cwd ~/.env — neither must leak into (or mask) these assertions.
+    """
+    for k in list(os.environ):
+        if k.startswith("LYRICS_FETCHER_") or k == "VISION_API_KEY":
+            monkeypatch.delenv(k, raising=False)
+    monkeypatch.chdir(tempfile.mkdtemp())
 
 
 def _write_config(text: str) -> Path:
@@ -83,3 +99,53 @@ def test_missing_config_file_raises():
     import pytest
     with pytest.raises(FileNotFoundError):
         load(Path("/nonexistent/config.toml"))
+
+# ---- env-var layer + .env secrets ----
+def test_env_overrides_toml(monkeypatch):
+    monkeypatch.setenv("LYRICS_FETCHER_VISION_VISION_MODEL", "env-model")
+    load(_write_config("[vision]\nvision_model = 'toml-model'\n"))
+    assert settings.vision_model == "env-model"
+
+
+def test_vision_api_key_alias(monkeypatch):
+    monkeypatch.setenv("VISION_API_KEY", "from-env")
+    load(_write_config("[vision]\nvision_api_key = 'from-toml'\n"))
+    # env alias wins over TOML (keys belong in env/.env, not the file)
+    assert settings.vision_api_key == "from-env"
+
+
+def test_key_absent_from_repr():
+    s = Settings()
+    object.__setattr__(s, "vision_api_key", "super-secret-value")
+    assert "super-secret-value" not in repr(s)
+
+
+def test_load_env_file_reads_dotenv(tmp_path, monkeypatch):
+    pytest.importorskip("dotenv")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("VISION_API_KEY=from-dotenv-file\n")
+    from lyrics_fetcher.config import load_env_file
+    load_env_file()
+    assert os.environ["VISION_API_KEY"] == "from-dotenv-file"
+    load()
+    assert settings.vision_api_key == "from-dotenv-file"
+
+
+def test_real_env_wins_over_dotenv(tmp_path, monkeypatch):
+    pytest.importorskip("dotenv")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("VISION_API_KEY=from-dotenv-file\n")
+    monkeypatch.setenv("VISION_API_KEY", "from-exported")
+    from lyrics_fetcher.config import load_env_file
+    load_env_file()
+    assert os.environ["VISION_API_KEY"] == "from-exported"
+
+
+def test_vlmocr_resolves_key_from_config(monkeypatch):
+    load(_write_config("[vision]\nvision_api_key = 'from-config'\n"))
+    from lyrics_fetcher.ocr.vision import VLMOcr
+    o = VLMOcr()
+    assert o.api_key == "from-config"
+    # local default: no key -> no Authorization header at all
+    load(_write_config(""))
+    assert VLMOcr().api_key == ""

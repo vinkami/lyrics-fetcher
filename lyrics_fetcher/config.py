@@ -2,8 +2,14 @@
 
 Settings come from (highest to lowest precedence):
   1. CLI arguments (parsed in cli.py, overlays these)
-  2. A config file (TOML) given via --config / env LF_CONFIG
-  3. Defaults defined here
+  2. Environment variables: LYRICS_FETCHER_<SECTION>_<ATTR>
+     (plus the bare alias VISION_API_KEY for the OCR endpoint secret)
+  3. A config file (TOML) given via --config / env LF_CONFIG
+  4. Defaults defined here
+
+Secrets (API keys) must NOT live in the TOML, which people commit by accident:
+put them in a gitignored ``.env`` (loaded here via python-dotenv, real env
+vars win) or export them. All keys are redacted from logs/reprs.
 
 Model/media paths are the only things that vary between machines; keeping them
 in one place makes the tool portable. See config.example.toml for a template.
@@ -18,11 +24,23 @@ from pathlib import Path
 #: default config file search locations
 CONFIG_FILENAMES = ("config.toml", "lyrics-fetcher.toml")
 
+#: section -> settings attributes; single source for TOML, env and CLI overlays
+SECTION_MAP = {
+    "paths": ["music_dir", "cache_db", "out_dir"],
+    "whisper": ["whisper_bin", "whisper_model", "whisper_extra_models",
+                "whisper_lang", "whisper_max_len", "whisper_device"],
+    "vision": ["vision_api", "vision_model", "vision_api_key"],
+    "qwen3_aligner": ["qwen3_aligner_model", "qwen3_aligner_language"],
+    "stable_ts": ["stable_ts_model", "stable_ts_lang", "stable_ts_device"],
+    "output": ["lrc_by", "jellyfin_default", "write_html_default"],
+    "tuning": ["anchor_min_score", "request_timeout"],
+}
+
 
 @dataclass
 class Settings:
     # --- media / data ---
-    music_dir: Path = Path("/mnt/fnos/storage/Music")
+    music_dir: Path = Path.home() / "Music"
     cache_db: Path = Path.home() / ".cache" / "lyrics-fetcher" / "cache.db"
     out_dir: Path = Path("out")
 
@@ -36,12 +54,19 @@ class Settings:
     whisper_max_len: int = 40
     whisper_device: int = 0
 
-    # --- Qwen vision OCR (llama-server) ---
-    vision_api: str = "http://127.0.0.1:8081/v1/chat/completions"
+    # --- vision OCR (any OpenAI-compatible endpoint; base URL ends at /v1,
+    #     the /chat/completions path is appended by the code) ---
+    vision_api: str = "http://127.0.0.1:8081/v1"
     vision_model: str = "qwen3.5-9b"
+    # Bearer token for cloud endpoints. Leave empty in TOML; set via
+    # VISION_API_KEY in .env (gitignored) — never commit real keys.
+    # repr=False so it can't leak via a stray `print(settings)`.
+    vision_api_key: str = field(default="", repr=False)
 
     # --- Qwen3-ForcedAligner ---
-    qwen3_aligner_model: Path = Path("/mnt/fnos/storage/ai-models/qwen3-forcedaligner/model")
+    # local dir holding the model snapshot; an HF hub repo id also works
+    # (transformers downloads it on first use)
+    qwen3_aligner_model: Path = Path.home() / ".cache" / "lyrics-fetcher" / "models" / "qwen3-forcedaligner"
     qwen3_aligner_language: str = "Japanese"
 
     # --- stable-ts (opt-in forced alignment, --aligner stable-ts) ---
@@ -91,6 +116,44 @@ def config_file() -> Path | None:
     return None
 
 
+def _apply_env(s: Settings) -> Settings:
+    """Env-var layer: LYRICS_FETCHER_<SECTION>_<ATTR> (highest except CLI).
+
+    Plus the bare convenience alias VISION_API_KEY for the OCR endpoint
+    secret, matching what .env files conventionally carry.
+    """
+    for section, attrs in SECTION_MAP.items():
+        for a in attrs:
+            v = os.environ.get(f"LYRICS_FETCHER_{section.upper()}_{a.upper()}")
+            if v is not None:
+                setattr(s, a, _coerce(s, a, v))
+    alias = os.environ.get("VISION_API_KEY")
+    if alias is not None:
+        s.vision_api_key = alias
+    return s
+
+
+def load_env_file(path: Path | None = None) -> None:
+    """Load a .env into os.environ via python-dotenv, real env vars winning.
+
+    Search order: explicit path, $PWD/.env, ~/.config/lyrics-fetcher/.env.
+    No-ops when python-dotenv is absent (exported vars still work) or no
+    file exists. The .env must be gitignored — keys never live in TOML.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    if path is None:
+        for cand in (Path.cwd() / ".env",
+                     Path.home() / ".config" / "lyrics-fetcher" / ".env"):
+            if cand.exists():
+                path = cand
+                break
+    if path is not None and path.exists():
+        load_dotenv(path, override=False)
+
+
 def load(path: Path | None = None, overrides: dict | None = None) -> Settings:
     """Load settings from a TOML file (or defaults) and apply dict overrides.
 
@@ -103,6 +166,7 @@ def load(path: Path | None = None, overrides: dict | None = None) -> Settings:
             {"vision.api": "..."}. CLI args get merged as these.
     """
     global settings
+    load_env_file()
     data: dict = {}
     if path is not None:
         if not path.exists():
@@ -117,6 +181,7 @@ def load(path: Path | None = None, overrides: dict | None = None) -> Settings:
 
     fresh = Settings()
     fresh = _apply_toml(fresh, data)
+    fresh = _apply_env(fresh)
     if overrides:
         fresh = _apply_overrides(fresh, overrides)
     # mutate the existing singleton in place so all importers see the change
@@ -126,18 +191,7 @@ def load(path: Path | None = None, overrides: dict | None = None) -> Settings:
 
 
 def _apply_toml(s: Settings, data: dict) -> Settings:
-    # section -> attribute mapping
-    section_map = {
-        "paths": ["music_dir", "cache_db", "out_dir"],
-        "whisper": ["whisper_bin", "whisper_model", "whisper_extra_models",
-                    "whisper_lang", "whisper_max_len", "whisper_device"],
-        "vision": ["vision_api", "vision_model"],
-        "qwen3_aligner": ["qwen3_aligner_model", "qwen3_aligner_language"],
-        "stable_ts": ["stable_ts_model", "stable_ts_lang", "stable_ts_device"],
-        "output": ["lrc_by", "jellyfin_default", "write_html_default"],
-        "tuning": ["anchor_min_score", "request_timeout"],
-    }
-    for section, attrs in section_map.items():
+    for section, attrs in SECTION_MAP.items():
         sd = data.get(section)
         if not isinstance(sd, dict):
             continue
@@ -155,17 +209,7 @@ def _apply_overrides(s: Settings, overrides: dict) -> Settings:
         else:
             # dotted section.key form
             section, _, attr = key.partition(".")
-            sm = {
-                "paths": ["music_dir", "cache_db", "out_dir"],
-                "whisper": ["whisper_bin", "whisper_model", "whisper_extra_models",
-                            "whisper_lang", "whisper_max_len", "whisper_device"],
-                "vision": ["vision_api", "vision_model"],
-                "qwen3_aligner": ["qwen3_aligner_model", "qwen3_aligner_language"],
-                "stable_ts": ["stable_ts_model", "stable_ts_lang", "stable_ts_device"],
-                "output": ["lrc_by", "jellyfin_default", "write_html_default"],
-                "tuning": ["anchor_min_score", "request_timeout"],
-            }.get(section, [])
-            if attr in sm:
+            if attr in SECTION_MAP.get(section, []):
                 setattr(s, attr, _coerce(s, attr, val))
     return s
 

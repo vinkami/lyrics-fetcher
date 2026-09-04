@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .models import LyricLine, Lyrics, SongMeta
 from .pipeline import Pipeline
-from .utils import MUSIC_DIR, _norm_ja
+from .utils import _norm_ja
 
 
 def _fuzz_ratio(a: str, b: str) -> int:

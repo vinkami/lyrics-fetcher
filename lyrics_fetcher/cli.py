@@ -106,8 +106,8 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 
 def _cmd_ocr(args: argparse.Namespace) -> int:
     path = Path(args.image)
-    ocr_engine = VLMOcr(api=args.api, model=args.model) if args.engine == "vlm" \
-        else TesseractOcr(lang=args.language)
+    ocr_engine = (VLMOcr(api=args.api, model=args.model, api_key=args.api_key)
+                  if args.engine == "vlm" else TesseractOcr(lang=args.language))
     try:
         print(ocr_engine.ocr(path))
     except Exception as e:
@@ -146,7 +146,7 @@ def _cmd_full(args: argparse.Namespace) -> int:
     image = Path(args.image) if args.image else None
     cache = _make_cache(not args.no_cache)
     # OCR available only if --image given (vision server must be reachable)
-    ocr_engine = VLMOcr(api=args.api, model=args.model, cache=cache) if image else None
+    ocr_engine = VLMOcr(api=args.api, model=args.model, api_key=args.api_key, cache=cache) if image else None
     pipe = Pipeline(
         aligner=_make_aligner(args),
         ocr=ocr_engine,
@@ -179,7 +179,7 @@ def _cmd_album(args: argparse.Namespace) -> int:
     cache = _make_cache(not args.no_cache)
     # OCR engine always available for batch (multi-song page splitting needs it;
     # tracks with no booklet page simply get no OCR lyrics)
-    ocr_engine = VLMOcr(api=args.api, model=args.model, cache=cache)
+    ocr_engine = VLMOcr(api=args.api, model=args.model, api_key=args.api_key, cache=cache)
     pipe = Pipeline(
         aligner=_make_aligner(args, default_extra_turbo=True),
         ocr=ocr_engine,
@@ -270,8 +270,9 @@ def build_parser() -> argparse.ArgumentParser:
     po = sub.add_parser("ocr", help="OCR a booklet image to text")
     po.add_argument("image")
     po.add_argument("--engine", choices=["vlm", "tesseract"], default="vlm")
-    po.add_argument("--api", default="http://127.0.0.1:8081/v1/chat/completions")
-    po.add_argument("--model", default="qwen3.5-9b")
+    po.add_argument("--api", default=None, help="chat-completions URL (default: [vision] config)")
+    po.add_argument("--model", default=None, help="vision model name (default: [vision] config)")
+    po.add_argument("--api-key", default=None, help="bearer token (default: VISION_API_KEY env)")
     po.add_argument("--language", default="jpn+eng")
     po.add_argument("--config", default=None, help="path to a config TOML file")
     po.set_defaults(func=_cmd_ocr)
@@ -313,8 +314,9 @@ def build_parser() -> argparse.ArgumentParser:
     pfull.add_argument("audio")
     pfull.add_argument("--image", default=None, help="booklet photo for OCR fallback")
     pfull.add_argument("-o", "--out-dir", default="out")
-    pfull.add_argument("--api", default="http://127.0.0.1:8081/v1/chat/completions")
-    pfull.add_argument("--model", default="qwen3.5-9b")
+    pfull.add_argument("--api", default=None, help="chat-completions URL (default: [vision] config)")
+    pfull.add_argument("--model", default=None, help="vision model name (default: [vision] config)")
+    pfull.add_argument("--api-key", default=None, help="bearer token (default: VISION_API_KEY env)")
     pfull.add_argument("--binary", default=None)
     pfull.add_argument("--model-whisper", default=None)
     pfull.add_argument("--extra-model", action="append", default=None,
@@ -344,8 +346,9 @@ def build_parser() -> argparse.ArgumentParser:
     pal.add_argument("--booklet", default=None,
                      help="path to a booklet image folder (default: <album>/booklet)")
     pal.add_argument("-o", "--out-dir", default="out")
-    pal.add_argument("--api", default="http://127.0.0.1:8081/v1/chat/completions")
-    pal.add_argument("--model", default="qwen3.5-9b")
+    pal.add_argument("--api", default=None, help="chat-completions URL (default: [vision] config)")
+    pal.add_argument("--model", default=None, help="vision model name (default: [vision] config)")
+    pal.add_argument("--api-key", default=None, help="bearer token (default: VISION_API_KEY env)")
     pal.add_argument("--binary", default=None)
     pal.add_argument("--model-whisper", default=None)
     pal.add_argument("--extra-model", action="append", default=None,

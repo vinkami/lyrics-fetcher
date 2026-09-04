@@ -85,7 +85,7 @@ uv sync
 
 ### 1b. Configuration file (optional)
 
-Settings are resolved by precedence: **CLI arguments > config file > defaults**.
+Settings are resolved by precedence: **CLI arguments > environment / `.env` > config file > defaults**.
 You can skip this — built-in defaults work out of the box — but a config file
 lets you point the tool at your models/library without repeating flags.
 
@@ -98,11 +98,19 @@ Key sections:
 - `[paths]` — `music_dir`, `cache_db`, `out_dir`
 - `[whisper]` — `whisper_bin`, `whisper_model`, `whisper_extra_models`,
   `whisper_lang`, `whisper_max_len`, `whisper_device`
-- `[vision]` — `vision_api`, `vision_model` (the local llama-server for OCR)
+- `[vision]` — `vision_api` (OpenAI-compatible **base URL**, ends at `/v1`;
+  the code appends `/chat/completions`), `vision_model` — works with a local
+  llama-server *or* any cloud vision model
 - `[qwen3_aligner]` — `qwen3_aligner_model`, `qwen3_aligner_language`
 - `[stable_ts]` — `stable_ts_model`, `stable_ts_lang`, `stable_ts_device`
 - `[output]` — `lrc_by`, `jellyfin_default`, `write_html_default`
 - `[tuning]` — `anchor_min_score`, `request_timeout`
+
+**API keys never go in the config file.** Put `VISION_API_KEY=*** in a
+gitignored `.env` at the project root (or `~/.config/lyrics-fetcher/.env`,
+or just export it — real environment variables win over the file). Any
+setting can also be overridden via env: `LYRICS_FETCHER_<SECTION>_<KEY>`,
+e.g. `LYRICS_FETCHER_VISION_VISION_MODEL=gpt-4o`.
 
 It's auto-detected from `$LF_CONFIG`, `$XDG_CONFIG_HOME/lyrics-fetcher/`, or
 `./config.toml`. To use an explicit file:
@@ -162,8 +170,11 @@ Check it works:
 
 ### 3. Qwen3.5-9B vision model (booklet OCR)
 
-Needed for the `ocr` / `full --image` paths. It runs via a **llama-server**
-(ROCm) that you keep running on port **8081**.
+Needed for the `ocr` / `full --image` paths. Any **OpenAI-compatible vision
+endpoint** works: a local llama-server (the default, port **8081**, steps
+below) or a cloud model — in that case skip all of this and just set
+`[vision]` to the provider's base URL + model in your config and the key in
+`.env` (see Configuration file above).
 
 1. Put the model on the NAS (or wherever you keep models):
    ```bash

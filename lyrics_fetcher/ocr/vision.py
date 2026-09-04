@@ -1,9 +1,17 @@
-"""Vision LLM OCR via a local llama-server (Qwen3.5-9B on RX 9060 XT).
+"""Vision LLM OCR via any OpenAI-compatible chat-completions endpoint.
 
-PRODUCTION (2026-08-28): Qwen3.5-9B (Q4_K_M) served on 127.0.0.1:8081 (my own
-start-vision; user's ~/AI/start untouched). Uses ~7.6GB VRAM, leaving ~9GB so
-whisper-medium can run simultaneously. Gemma-4-12B failed (mojibake); 27B was
-worse and used 16.4GB.
+Works with a local llama-server (default: Qwen3.5-9B on the RX 9060 XT /
+eGPU) OR a cloud vision model (OpenAI, OpenRouter, Groq, ...). Point it
+elsewhere via config — the OpenAI-compatible *base URL* (ending at /v1) +
+model name in the [vision] section, the API key via VISION_API_KEY in a
+gitignored .env (see config.load_env_file):
+
+    [vision]
+    vision_api = "https://openrouter.ai/api/v1"   # /chat/completions is
+    vision_model = "some-vision-model"            # appended by the code
+
+The endpoint must accept image_url content parts (base64 data URLs are sent;
+cloud providers with request-size caps get images downscaled to MAX_SIDE).
 """
 from __future__ import annotations
 
@@ -20,10 +28,6 @@ from ..config import settings
 from ..models import Lyrics, LyricLine
 from ..utils import _norm_ja
 from .base import BaseOCR
-
-# default Qwen vision server (override via constructor or config)
-DEFAULT_API = settings.vision_api
-DEFAULT_MODEL = settings.vision_model
 
 VLM_PROMPT = (
     "This is a photo of an album lyrics booklet page (Japanese). "
@@ -71,16 +75,38 @@ class VLMOcr(BaseOCR):
     name = "ocr-vlm"
 
     def __init__(self, api: str | None = None, model: str | None = None,
-                 timeout: int = 600, cache=None, clean: bool = True):
+                 timeout: int = 600, cache=None, clean: bool = True,
+                 api_key: str | None = None):
         self.api = api or settings.vision_api
         self.model = model or settings.vision_model
+        # empty/None => local server, no auth. Never logged or printed anywhere.
+        self.api_key = api_key if api_key is not None else settings.vision_api_key
         self.timeout = timeout
         self.cache = cache
         self.clean = clean
         self._songs_cache: dict[Path, dict[str, str]] = {}
 
+    def _endpoint(self) -> str:
+        """Resolve the chat-completions URL from the configured base.
+
+        ``vision_api`` is the OpenAI-compatible *base URL* (ends at /v1, e.g.
+        https://openrouter.ai/api/v1); the /chat/completions path is fixed by
+        the API spec and appended here. A full .../chat/completions URL is
+        also accepted unchanged (back-compat with older configs).
+        """
+        u = self.api.rstrip("/")
+        if u.endswith("/chat/completions"):
+            return u
+        return f"{u}/chat/completions"
+
+    def _headers(self) -> dict:
+        """Auth headers for the endpoint. Key exists only in memory/env."""
+        if self.api_key:
+            return {"Authorization": f"Bearer {self.api_key}"}
+        return {}
+
     def _chat(self, prompt: str, image: Path | None = None, max_tokens: int = 2048) -> str:
-        """Call the llama-server vision/text endpoint; returns assistant text."""
+        """Call the chat-completions endpoint; returns assistant text."""
         content = [{"type": "text", "text": prompt}]
         if image is not None:
             content.append({"type": "image_url", "image_url": {"url": self._encode(image)}})
@@ -90,8 +116,15 @@ class VLMOcr(BaseOCR):
             "temperature": 0.1,
             "max_tokens": max_tokens,
         }
-        r = requests.post(self.api, json=payload, timeout=self.timeout)
-        r.raise_for_status()
+        r = requests.post(self._endpoint(), json=payload, headers=self._headers(),
+                          timeout=self.timeout)
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            # body can echo request context; keep only the status line so the
+            # failure message never carries anything endpoint-specific beyond URL.
+            raise RuntimeError(f"vision endpoint returned HTTP {r.status_code} "
+                               f"for {self._endpoint()}") from e
         return r.json()["choices"][0]["message"]["content"]
 
     @staticmethod

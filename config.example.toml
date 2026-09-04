@@ -1,36 +1,50 @@
 # lyrics-fetcher configuration
 # Copy this to ~/.config/lyrics-fetcher/config.toml (or ./config.toml) and edit.
 #
-# Precedence: CLI arguments > this file > built-in defaults.
-# All paths are optional — omit any key to use the default.
+# Precedence: CLI arguments > environment > this file > built-in defaults.
+# Environment: LYRICS_FETCHER_<SECTION>_<KEY> (e.g. LYRICS_FETCHER_VISION_VISION_API),
+# plus the alias VISION_API_KEY. A gitignored .env in the working dir or
+# ~/.config/lyrics-fetcher/.env is loaded into the environment automatically
+# (python-dotenv; real exported vars win).
+#
+# NEVER put API keys in this file if you might commit it — keys belong in .env
+# (gitignored). All paths are optional — omit any key to use the default.
 
 [paths]
-# Where your music library lives (music_dir is used as the base for relative
-# audio paths in batch mode, though most commands take explicit file paths).
-music_dir = "/mnt/fnos/storage/Music"
-# SQLite cache location (lyrics + OCR)
-cache_db = "/home/vinkami/.cache/lyrics-fetcher/cache.db"
+# Where your music library lives (base for batch operations)
+music_dir = "/path/to/your/Music"
+# SQLite cache location (lyrics + OCR); default ~/.cache/lyrics-fetcher/cache.db
+#cache_db = "/home/you/.cache/lyrics-fetcher/cache.db"
 # default output directory (used by `full`/`album` without --jellyfin)
 out_dir = "out"
 
 [whisper]
-# whisper.cpp binary + model (primary aligner)
-whisper_bin = "/home/vinkami/whisper.cpp/build/bin/whisper-cli"
-whisper_model = "/home/vinkami/whisper.cpp/models/ggml-medium.bin"
-# extra model(s) merged as anchors (comma-separated or list); empty = none
-whisper_extra_models = "/home/vinkami/whisper.cpp/models/ggml-large-v3-turbo.bin"
+# whisper.cpp binary + model (primary aligner); defaults are
+# ~/whisper.cpp/build/bin/whisper-cli and ~/whisper.cpp/models/ggml-medium.bin
+#whisper_bin = "/home/you/whisper.cpp/build/bin/whisper-cli"
+#whisper_model = "/home/you/whisper.cpp/models/ggml-medium.bin"
+# extra model(s) merged as anchors (list or comma-separated); empty = none
+#whisper_extra_models = "/home/you/whisper.cpp/models/ggml-large-v3-turbo.bin"
 whisper_lang = "ja"
 whisper_max_len = 40
 whisper_device = 0
 
 [vision]
-# local vision LLM (llama-server) for booklet OCR
-vision_api = "http://127.0.0.1:8081/v1/chat/completions"
+# Booklet OCR: ANY OpenAI-compatible endpoint with vision. Give the *base URL*
+# (ends at /v1); the code appends the fixed /chat/completions path.
+# Local llama-server (default):
+vision_api = "http://127.0.0.1:8081/v1"
 vision_model = "qwen3.5-9b"
+# Cloud examples (key goes in .env as VISION_API_KEY, NOT here):
+#vision_api = "https://openrouter.ai/api/v1"
+#vision_api = "https://api.openai.com/v1"
+#vision_model = "gpt-4o"
+# You may set the key here for a private config, but prefer VISION_API_KEY:
+#vision_api_key = ""
 
 [qwen3_aligner]
 # Qwen3-ForcedAligner model dir (the --aligner qwen3 option)
-qwen3_aligner_model = "/mnt/fnos/storage/ai-models/qwen3-forcedaligner/model"
+#qwen3_aligner_model = "/path/to/qwen3-forcedaligner/model"
 qwen3_aligner_language = "Japanese"
 
 [stable_ts]
@@ -38,8 +52,8 @@ qwen3_aligner_language = "Japanese"
 # needs `uv sync --dev`). whisper model size used by stable_whisper.load_model
 stable_ts_model = "medium"
 stable_ts_lang = "ja"
-# torch device: "cuda" = RX 9060 XT under ROCm. Do NOT use the eGPU (device
-# index 2) — torch ROCm hangs on first compute there.
+# torch device: "cuda" works on NVIDIA and AMD (ROCm). On multi-GPU AMD
+# boxes, "cuda" = index 0; avoid routing compute to an eGPU (hangs here).
 stable_ts_device = "cuda"
 
 [output]
