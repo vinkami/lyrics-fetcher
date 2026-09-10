@@ -48,7 +48,7 @@ structured replies, no fluff. Prefers bullet points, facts, honest
 | `dfd2352` | #1 | The full working project (fetch/align/output + README) |
 
 Working tree is clean, on `main`, synced with `origin/main`. **Test suite now 127** (`uv run pytest -q`, no GPU/network needed).
-Deploy state: **ASTEROID CLOSED** (§9e); **VOCALOID 超BEST -memories- 19/19** + **EO 8番出口 4/4 vocal** deployed web-fetch + stable-ts (§9f); kagamination2 partial 8/32 (remainder genuinely absent from all DBs).
+Deploy state: **ASTEROID CLOSED** (§9e); **VOCALOID 超BEST -memories- 19/19** — tracks 01–04 now re-sourced **utaten** web-first (§9g); **EO 8番出口 4/4 vocal** (§9f); **COOL&CREATE とうほう☆みくれいむ 4/5** (§9g); **FESTIVAL 2/6** (4 genuine misses; 1 sparse genius-only; §9g); **PRiSM 5/6** w/ Edelweiss .lrc rebuilt from old HTML + ATLAS RUSH flipped by #20 (§9g); kagamination2 partial 8/32 (remainder genuinely absent from all DBs).
 
 **Branching strategy now active:**
 - `main` = stable trunk, only receives squash-merged PRs
@@ -242,10 +242,9 @@ blocks `setpci`); not worth re-debugging unless the user asks.
   **one booklet photo per song** (mitigates §6.12). NOTE the 2-column cloud
   test FAILED (§9e) — the gate for trusting 2-col pages no longer exists;
   single-song photos + line-count verification is the rule.
-- **B2 — more web-fetchable albums (no photos needed):** COOL&CREATE
-  とうほう☆みくれいむ (genius hits), maimai FESTIVAL (silentblue partial),
-  re-check PRiSM's 3 missing (negative-cache fix may flip them). Amatsu
-  Kitsune partially (silentblue). See §9f survey.
+- **B2 — more web-fetchable albums:** ✅ **DONE 2026-09-10 (§9g)** — COOL&CREATE
+  4/5, FESTIVAL 2/6, PRiSM 5/6 (Edelweiss rebuilt from timed HTML; ATLAS RUSH
+  flipped by the #20 fix). Amatsu Kitsune still needs booklet photos.
 - **C — ~~ASTEROID round-3 listen review~~ ✅ DONE — ASTEROID CLOSED (§9e),
   user approved all 5 songs; backups pruned. Open listen question instead:
   EO 8番出口 lrc tail overruns for Short/耐久 variants (§9f lesson) — needs
@@ -554,6 +553,51 @@ CDs must not enter the public repo.
 
 ---
 
+## 9g. Session log — 2026-09-10: memories utaten re-run + B2 sweep
+
+**Memories tracks 01–04 re-run web-first (the §9f NOTE):** `full --jellyfin
+--aligner stable-ts` per track (NOT `album --web-first` — booklet pages at
+`<album>/booklet` exist, so album mode would OCR-first regardless; `full` with
+no `--image` is purely web → align → write). All 4 now **utaten**-sourced
+(66/54/118/142 lines), 0 monotonic violations, 482–702 ruby tags each (furigana
+win vs OCR). Prior versions: `_backups/memories_2026-09-10_pre-utaten-rerun/`
+(+sha256). NOTE stable_ts warned "failed to align last 683/1364 words after
+03:40" on アンハッピー — the aligner fell back per-word within coverage; listen-
+check that song's last third if the user flags it.
+
+**B2 deployed:**
+- **COOL&CREATE とうほう☆みくれいむ 4/5** — 01/02/05 silentblue via
+  `album --jellyfin --web-first --aligner stable-ts`; 03 チルノ rescued via
+  **corrected title**: disc tag says 学園 but the real song is チルノの
+  パーフェクトさんすう**教室** (silentblue, 33L) — manual
+  `poc/align_txt_to_jellyfin.py`. 04 とうほう☆ワンダーLAND = genuine miss
+  (utaten has a different song with the exact same title — ワンダーランズ×
+  ショウタイム — disambiguator correctly rejects it).
+- **FESTIVAL 2/6** — 01 ホシシズク silentblue (45L); 03 HECATONCHEIR genius
+  (**only 9 lines** — Genius genuinely has just this much; deployed but it's a
+  sparse karaoke-at-best lrc, flag for user's ears). 02/04/05/06 genuinely
+  absent from all 3 DBs.
+- **PRiSM re-check (post-#20):** +2 — 02 Edelweiss `.lrc` **rebuilt from the
+  0828-run's timed HTML** (58 lines, exact `data-start` timings, 0 violations —
+  that pressing's HTML was the lost tail of a crashed run; recovery recipe
+  = parse `div.lyrics-line[data-start]`) and 06 ATLAS RUSH genius 5L (the #20
+  negative-cache fix flipped it; text is kanone's 5-line official snippet —
+  same sparse caveat). 04 Divide et impera confirmed **no lyrics** (silentblue
+  wiki: "Lyrics: None." — the ♪~ HTML was whisper garbage; instrumental
+  vocals). 03/05 unchanged. PRiSM now 5/6 with lyrics (Cryptarithm = artificial
+  language, expected junk).
+
+**B2 lesson — probe WITH artists:** bare-title `fetch` probes are misleading —
+"Edelweiss" hits utaten (Rogers&Hammerstein, correctly rejected once artist
+やどりぎ is supplied), "Rising on the horizon" hits genius (TobyMac). Always
+probe with the tag artist before declaring a source reachable. Disambiguation
+is working as designed. Also: `_backups/prism_2026-09-10_pre-webrecheck/` holds
+the 2 overwritten HTMLs.
+
+**New open item:** HECATONCHEIR (9L) + ATLAS RUSH (5L) deployed from genuinely
+thin Genius pages — user should listen and decide if sparse is acceptable.
+
+---
 ## 10. Commands cheat-sheet
 
 ```bash
